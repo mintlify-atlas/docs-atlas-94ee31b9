@@ -1,0 +1,695 @@
+---
+title: Quote History
+description: Access, view, edit, and manage your saved quotes in CotizaClima's quote history interface
+---
+
+The quote history page (`quotes.html`) provides a centralized interface for managing all your saved quotes. You can view past quotes, edit drafts, reissue quotes, and manage your quotation workflow.
+
+## Accessing Quote History
+
+Quote history requires authentication to access.
+
+<Steps>
+  <Step title="Sign In">
+    Log in using your Firebase Authentication credentials from the main app.
+  </Step>
+  
+  <Step title="Open Menu">
+    Click the hamburger menu icon in the top-right corner.
+  </Step>
+  
+  <Step title="Select History">
+    Click "Ver historial" to open the quote history page.
+  </Step>
+</Steps>
+
+```javascript
+// Menu action to open history
+if (historyAction) {
+  historyAction.addEventListener('click', function() {
+    closeMenu();
+    if (!isAuthenticated()) {
+      showToast('Inicia sesión para ver el historial.', 'error');
+      openLoginModal();
+      return;
+    }
+    window.location.href = 'quotes.html';
+  });
+}
+```
+
+<Warning>
+  The "Ver historial" menu option is disabled when you're not authenticated. You must sign in first to access your quote history.
+</Warning>
+
+## Quote History Page Structure
+
+The history page displays all saved quotes in reverse chronological order (most recent first).
+
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Historial de Cotizaciones</title>
+  <link rel="stylesheet" href="quotes.css">
+</head>
+<body class="quotes-page">
+  <main class="quotes-shell">
+    <div class="quotes-topbar">
+      <div>
+        <h1 class="quotes-title">Historial</h1>
+        <p class="quotes-sub">
+          Consulta, edita y vuelve a emitir cotizaciones guardadas.
+        </p>
+      </div>
+      <div class="quotes-actions">
+        <button id="btnBackApp" class="quotes-btn secondary">
+          Volver a la app
+        </button>
+        <button id="btnLogout" class="quotes-btn danger">
+          Cerrar sesión
+        </button>
+      </div>
+    </div>
+    
+    <p id="sessionInfo" class="quotes-sub">Sin sesión</p>
+    
+    <section id="quotesListCard" class="list-card hidden">
+      <h2>Cotizaciones guardadas</h2>
+      <p class="quotes-sub">
+        Abre una cotización para editarla antes de volver a generar PDF.
+      </p>
+      <div id="quoteList" class="quote-list"></div>
+    </section>
+    
+    <p id="quotesStatus" class="status-line"></p>
+  </main>
+  
+  <script src="firebase-auth.js"></script>
+  <script src="quotes-repo.js"></script>
+  <script src="quotes.js"></script>
+</body>
+</html>
+```
+
+## Loading Quote History
+
+Quotes are loaded automatically when the page opens.
+
+### Bootstrap and Authentication Check
+
+```javascript
+async function bootstrap() {
+  const user = window.FirebaseAuthService.getCurrentUser();
+  const token = await window.FirebaseAuthService.getValidIdToken();
+  
+  if (!user || !token) {
+    setAuthUi(false, '');
+    return;
+  }
+  
+  setAuthUi(true, user.email || '');
+  try {
+    await loadQuotes();
+    showStatus('Historial actualizado.', false);
+  } catch (e) {
+    showStatus(e.message || 'No se pudo cargar historial.', true);
+  }
+}
+```
+
+### Fetching Quotes from Firebase
+
+```javascript
+async function loadQuotes() {
+  const { user, idToken } = await requireAuthContext();
+  const list = await window.QuotesRepo.listQuotes(user.uid, idToken);
+  const container = document.getElementById('quoteList');
+  
+  if (!list.length) {
+    container.innerHTML = 
+      '<div class="quote-item">' +
+      'No hay cotizaciones guardadas.' +
+      '</div>';
+    return;
+  }
+  
+  container.innerHTML = list.map(quoteItemTemplate).join('');
+}
+```
+
+<Info>
+  Quotes are automatically sorted by update date, with the most recently modified quotes appearing first.
+</Info>
+
+## Quote List Items
+
+Each quote displays key information and available actions.
+
+### Quote Item Template
+
+```javascript
+function quoteItemTemplate(item) {
+  const client = item.client || {};
+  const clientName = client.name || 'Sin nombre';
+  const total = item.pricing && item.pricing.total 
+    ? `$${fmtNum(item.pricing.total)}` 
+    : '$0';
+  const updated = item.updatedAt 
+    ? new Date(item.updatedAt).toLocaleString('es-CL') 
+    : 'Sin fecha';
+  const status = item.status || 'draft';
+  const phone = client.phone ? client.phone.trim() : '';
+  const wazeUrl = buildWazeUrl(client);
+  
+  const callBtn = phone
+    ? `<a class="quotes-btn secondary icon-btn" 
+           href="tel:${phone.replace(/\s/g, '')}" 
+           title="Llamar a ${clientName}">
+         <i class="fas fa-phone"></i>
+       </a>`
+    : '';
+  
+  const wazeBtn = wazeUrl
+    ? `<a class="quotes-btn secondary icon-btn" 
+           href="${wazeUrl}" 
+           target="_blank" 
+           rel="noopener noreferrer" 
+           title="Navegar con Waze">
+         <i class="fas fa-route"></i>
+       </a>`
+    : '';
+  
+  return `<div class="quote-item" data-id="${item.id}">
+    <div class="quote-head">
+      <div>
+        <div class="quote-num">${item.quoteNumber || item.id}</div>
+        <div class="quote-meta">
+          Actualizada: ${updated} · Estado: ${status}
+        </div>
+      </div>
+      <div class="quote-total">${total}</div>
+    </div>
+    <div class="quote-client">Cliente: ${clientName}</div>
+    <div class="quote-actions">
+      <button class="quotes-btn icon-btn" 
+              data-action="open" 
+              data-id="${item.id}" 
+              title="Abrir y editar">
+        <i class="fas fa-pen-to-square"></i>
+      </button>
+      <button class="quotes-btn secondary icon-btn" 
+              data-action="duplicate" 
+              data-id="${item.id}" 
+              title="Duplicar">
+        <i class="fas fa-copy"></i>
+      </button>
+      ${callBtn}${wazeBtn}
+      <button class="quotes-btn danger icon-btn" 
+              data-action="delete" 
+              data-id="${item.id}" 
+              title="Eliminar">
+        <i class="fas fa-trash"></i>
+      </button>
+    </div>
+  </div>`;
+}
+```
+
+### Information Displayed
+
+<CardGroup cols={3}>
+  <Card title="Quote Number" icon="file-lines">
+    Format: `CL-YYYY-####`
+    
+    Example: `CL-2026-0042`
+  </Card>
+  
+  <Card title="Update Date" icon="clock">
+    Shows when the quote was last modified
+    
+    Format: `DD/MM/YYYY HH:MM`
+  </Card>
+  
+  <Card title="Status" icon="tag">
+    Either `draft` or `issued`
+    
+    Draft = not yet issued to client
+  </Card>
+</CardGroup>
+
+<CardGroup cols={2}>
+  <Card title="Client Name" icon="user">
+    The name entered in Step 4 of quote creation
+  </Card>
+  
+  <Card title="Total Amount" icon="dollar-sign">
+    Final quote total including equipment, service, accessories, and discounts
+  </Card>
+</CardGroup>
+
+## Quote Statuses
+
+CotizaClima distinguishes between two quote statuses:
+
+### Draft Status
+
+Quotes saved without generating a PDF are marked as drafts.
+
+```javascript
+// Saving a draft quote
+async function saveDraftQuote() {
+  return persistCurrentQuote('draft', { 
+    requireAuth: true, 
+    silent: false 
+  });
+}
+```
+
+<Note>
+  Draft quotes are useful for:
+  - Incomplete quotes that need more information
+  - Quotes pending approval from a supervisor
+  - Templates for similar future quotes
+</Note>
+
+### Issued Status
+
+Quotes are marked as issued when you generate a PDF.
+
+```javascript
+// Auto-save as issued when generating PDF
+window.generatePDF = async function patchedGeneratePDF() {
+  let saved = null;
+  try {
+    saved = await persistCurrentQuote('issued', { 
+      requireAuth: false, 
+      silent: true 
+    });
+  } catch (e) {
+    saved = null;
+  }
+  
+  await original(); // Generate the PDF
+  
+  if (saved) {
+    showToast('PDF generado y cotización guardada', 'success');
+  }
+};
+```
+
+<Info>
+  Issued quotes represent final versions that have been provided to clients. You can still edit and reissue them if needed.
+</Info>
+
+## Available Actions
+
+The quote history page provides several actions for managing quotes.
+
+### Open and Edit
+
+Open a saved quote in the main editor to make changes.
+
+```javascript
+async function openQuote(id) {
+  const { user, idToken } = await requireAuthContext();
+  const quote = await window.QuotesRepo.getQuote(user.uid, idToken, id);
+  if (!quote) throw new Error('Cotización no encontrada.');
+  navigateToEditorWithQuote(quote);
+}
+
+function navigateToEditorWithQuote(quote) {
+  sessionStorage.setItem(PENDING_QUOTE_STORAGE_KEY, 
+    JSON.stringify({ quote })
+  );
+  window.location.href = 'index.html';
+}
+```
+
+<Steps>
+  <Step title="Click Edit Icon">
+    Click the pen icon on the quote you want to edit.
+  </Step>
+  
+  <Step title="Auto-Load">
+    The quote is automatically loaded into the main editor.
+  </Step>
+  
+  <Step title="Make Changes">
+    Edit any step of the quote as needed.
+  </Step>
+  
+  <Step title="Save or Generate">
+    Save changes or generate a new PDF.
+  </Step>
+</Steps>
+
+<Tip>
+  When you open a quote for editing, all its data (equipment selections, service type, client info, pricing) is restored exactly as it was saved.
+</Tip>
+
+### Duplicate Quote
+
+Create a copy of an existing quote with a new quote number.
+
+```javascript
+async function duplicateQuote(id) {
+  const { user, idToken } = await requireAuthContext();
+  const quote = await window.QuotesRepo.getQuote(user.uid, idToken, id);
+  if (!quote) throw new Error('No se encontró para duplicar.');
+  
+  // Calculate next quote number for the same year
+  const targetYear = getQuoteYearFromNumber(quote.quoteNumber);
+  const allQuotes = await window.QuotesRepo.listQuotes(user.uid, idToken);
+  const maxSeq = (allQuotes || []).reduce((max, item) => {
+    const seq = parseQuoteSequenceByYear(
+      item && item.quoteNumber, 
+      targetYear
+    );
+    return seq > max ? seq : max;
+  }, 0);
+  const nextQuoteNumber = buildQuoteNumber(targetYear, maxSeq + 1);
+  
+  // Create clone with new ID and quote number
+  const clone = {
+    ...quote,
+    id: undefined,
+    activeQuoteId: null,
+    status: 'draft',
+    quoteNumber: nextQuoteNumber,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  
+  await window.QuotesRepo.saveQuote(user.uid, idToken, clone, null);
+  showStatus('Cotización duplicada.', false);
+  await loadQuotes();
+}
+```
+
+<Info>
+  Duplicating is useful for:
+  - Creating similar quotes for different clients
+  - Using a past quote as a template
+  - Reissuing an old quote with updated pricing
+</Info>
+
+### Delete Quote
+
+Permanently remove a quote from your history.
+
+```javascript
+async function deleteQuote(id) {
+  const ok = window.confirm(
+    '¿Eliminar esta cotización? Esta acción no se puede deshacer.'
+  );
+  if (!ok) return;
+  
+  const { user, idToken } = await requireAuthContext();
+  await window.QuotesRepo.deleteQuote(user.uid, idToken, id);
+  showStatus('Cotización eliminada.', false);
+  await loadQuotes();
+}
+```
+
+<Warning>
+  Deletion is permanent and cannot be undone. A confirmation dialog will appear before deleting.
+</Warning>
+
+### Call Client
+
+Quickly call the client associated with a quote.
+
+```javascript
+const phone = client.phone ? client.phone.trim() : '';
+const callBtn = phone
+  ? `<a class="quotes-btn secondary icon-btn" 
+         href="tel:${phone.replace(/\s/g, '')}" 
+         title="Llamar a ${clientName}">
+       <i class="fas fa-phone"></i>
+     </a>`
+  : '';
+```
+
+<Note>
+  The call button only appears if the quote includes a phone number for the client.
+</Note>
+
+### Navigate with Waze
+
+Open Waze with the client's address for turn-by-turn navigation.
+
+```javascript
+function buildWazeUrl(client) {
+  if (!client) return '';
+  const parts = [client.address, client.city, client.region]
+    .filter(Boolean);
+  if (!parts.length) return '';
+  return 'https://waze.com/ul?q=' + 
+         encodeURIComponent(parts.join(', ')) + 
+         '&navigate=yes';
+}
+```
+
+<Tip>
+  The Waze button is especially useful when you need to visit a client's location for installation or service.
+</Tip>
+
+## Quote Number Format
+
+CotizaClima uses a structured quote numbering system.
+
+### Current Format
+
+Format: `CL-YYYY-####`
+
+- `CL` = Company prefix (CotizaClima)
+- `YYYY` = Four-digit year
+- `####` = Sequential number (zero-padded to 4 digits)
+
+Examples:
+- `CL-2026-0001` (First quote of 2026)
+- `CL-2026-0042` (42nd quote of 2026)
+- `CL-2025-0999` (999th quote of 2025)
+
+### Legacy Format Support
+
+Older quotes may use the legacy format:
+
+Format: `COT-YYYYMMDD-####`
+
+```javascript
+function parseQuoteSequenceByYear(quoteNumber, year) {
+  const normalized = String(quoteNumber || '').trim().toUpperCase();
+  
+  // Current format: CL-YYYY-####
+  const currentFmt = normalized.match(/^CL-(\d{4})-(\d{4,})$/);
+  if (currentFmt) {
+    if (String(year) !== currentFmt[1]) return 0;
+    return Number(currentFmt[2] || 0) || 0;
+  }
+  
+  // Legacy format: COT-YYYYMMDD-####
+  const legacyFmt = normalized.match(/^COT-(\d{8})-(\d{4,})$/);
+  if (legacyFmt) {
+    const legacyYear = legacyFmt[1].slice(0, 4);
+    if (String(year) !== legacyYear) return 0;
+    return Number(legacyFmt[2] || 0) || 0;
+  }
+  
+  return 0;
+}
+```
+
+<Info>
+  CotizaClima automatically handles both current and legacy quote number formats for backward compatibility.
+</Info>
+
+## Quote Repository Operations
+
+All quote operations go through the `QuotesRepo` module.
+
+### List All Quotes
+
+```javascript
+async function listQuotes(uid, idToken) {
+  const raw = await request(`quotes/${uid}`, idToken, { 
+    method: 'GET' 
+  });
+  if (!raw || typeof raw !== 'object') return [];
+  
+  return Object.entries(raw)
+    .map(([id, payload]) => ({ id, ...(payload || {}) }))
+    .sort((a, b) => 
+      Number(b.updatedAt || b.createdAt || 0) - 
+      Number(a.updatedAt || a.createdAt || 0)
+    );
+}
+```
+
+### Get Single Quote
+
+```javascript
+async function getQuote(uid, idToken, quoteId) {
+  const payload = await request(
+    `quotes/${uid}/${quoteId}`, 
+    idToken, 
+    { method: 'GET' }
+  );
+  if (!payload) return null;
+  return { id: quoteId, ...payload };
+}
+```
+
+### Save or Update Quote
+
+```javascript
+async function saveQuote(uid, idToken, quotePayload, quoteId) {
+  const now = Date.now();
+  const basePayload = {
+    ...quotePayload,
+    ownerUid: uid,
+    updatedAt: now,
+    createdAt: quotePayload && quotePayload.createdAt 
+      ? quotePayload.createdAt 
+      : now
+  };
+  
+  if (quoteId) {
+    // Update existing quote
+    await request(`quotes/${uid}/${quoteId}`, idToken, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(basePayload)
+    });
+    return { id: quoteId, payload: basePayload };
+  }
+  
+  // Create new quote
+  const created = await request(`quotes/${uid}`, idToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(basePayload)
+  });
+  
+  const id = created && created.name ? created.name : null;
+  if (!id) throw new Error('No se pudo crear la cotización (sin id).');
+  return { id, payload: basePayload };
+}
+```
+
+### Delete Quote
+
+```javascript
+async function deleteQuote(uid, idToken, quoteId) {
+  await request(`quotes/${uid}/${quoteId}`, idToken, { 
+    method: 'DELETE' 
+  });
+  return true;
+}
+```
+
+## Firebase Data Structure
+
+Quotes are stored in Firebase Realtime Database:
+
+```json
+{
+  "quotes": {
+    "[userId]": {
+      "[quoteId]": {
+        "quoteNumber": "CL-2026-0042",
+        "status": "issued",
+        "ownerUid": "user123",
+        "createdAt": 1234567890000,
+        "updatedAt": 1234567890000,
+        "client": {
+          "name": "Juan Pérez",
+          "rut": "12.345.678-9",
+          "phone": "+56 9 1234 5678",
+          "email": "juan@ejemplo.cl",
+          "address": "Av. Principal 123",
+          "city": "Curicó",
+          "region": "Maule",
+          "property": "Casa",
+          "notes": ""
+        },
+        "equipmentSelections": [
+          {
+            "brand": "LG",
+            "model": "DUAL Inverter S4-W12JA3AA",
+            "btu": 12000,
+            "refrigerant": "R32",
+            "quantity": 1,
+            "priceWithTax": 299990
+          }
+        ],
+        "service": {
+          "id": "instalacion",
+          "name": "Instalación nueva",
+          "price": 100000,
+          "notes": "Instalación en segundo piso"
+        },
+        "accessories": [],
+        "pricing": {
+          "equipmentTotal": 299990,
+          "serviceTotal": 100000,
+          "accessoriesTotal": 0,
+          "subtotal": 399990,
+          "discountPercent": 10,
+          "discountAmount": 39999,
+          "total": 359991
+        }
+      }
+    }
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Regular Cleanup" icon="broom">
+    Periodically delete old draft quotes that are no longer needed to keep your history organized.
+  </Card>
+  
+  <Card title="Use Descriptive Client Names" icon="user-tag">
+    Use full names or business names to easily identify quotes in the list.
+  </Card>
+  
+  <Card title="Save Drafts Frequently" icon="floppy-disk">
+    Save draft quotes when working on complex quotations to avoid losing progress.
+  </Card>
+  
+  <Card title="Duplicate for Templates" icon="copy">
+    Use the duplicate feature to create quote templates for common scenarios.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Accordion title="Quotes not loading">
+  **Possible causes:**
+  - Lost authentication session
+  - Firebase connection issues
+  - Browser offline
+  
+  **Solution:** Sign out and sign in again, check your internet connection, and try refreshing the page.
+</Accordion>
+
+<Accordion title="Cannot open a quote for editing">
+  **Possible cause:** Quote data is corrupted or incomplete
+  
+  **Solution:** Try duplicating the quote instead, which creates a fresh copy.
+</Accordion>
+
+<Accordion title="Delete confirmation not appearing">
+  **Possible cause:** Browser is blocking JavaScript dialogs
+  
+  **Solution:** Allow dialogs for the CotizaClima site in your browser settings.
+</Accordion>
+
+<Note>
+  Quote history is stored per user account. Different accounts will have completely separate quote histories.
+</Note>

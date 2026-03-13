@@ -1,0 +1,261 @@
+---
+title: Quotation Wizard
+description: Step-by-step guided workflow for creating professional air conditioning quotations
+icon: wand-magic-sparkles
+---
+
+The quotation wizard guides users through a 5-step process to create complete, professional air conditioning quotations. Each step validates data before allowing progression, ensuring all required information is captured.
+
+## 5-Step Workflow
+
+The wizard consists of five distinct steps, each focusing on a specific aspect of the quotation:
+
+<Steps>
+  <Step title="Equipment Selection">
+    Select air conditioning equipment with filtering by brand, BTU capacity, and refrigerant type.
+  </Step>
+  <Step title="Service Type">
+    Choose from 6 service types: installation, maintenance, replacement, repair, warranty, or quote-only.
+  </Step>
+  <Step title="Accessories & Extras">
+    Add optional accessories like piping kits, electrical components, and installation materials.
+  </Step>
+  <Step title="Client Information">
+    Capture complete client details including contact info, installation address, and GPS location.
+  </Step>
+  <Step title="Summary & PDF">
+    Review the complete quotation, apply discounts, and generate a professional PDF document.
+  </Step>
+</Steps>
+
+## Step Navigation System
+
+The application uses a multi-layer navigation system with visual indicators for completed steps:
+
+### Visual Progress Indicator
+
+The step bar at the top displays:
+- **Active step**: Highlighted with accent color
+- **Completed steps**: Marked with checkmark (✓)
+- **Pending steps**: Grayed out with step number
+
+```html {3-5,9-11} title="index.html"
+<div class="step-bar">
+  <div class="steps-track">
+    <div class="step-col">
+      <div class="step-dot active" id="sd1">1</div>
+      <div class="step-label active" id="sl1">Equipo</div>
+    </div>
+    <div class="step-line" id="sline1"></div>
+    <div class="step-col">
+      <div class="step-dot" id="sd2">2</div>
+      <div class="step-label" id="sl2">Servicio</div>
+    </div>
+    <!-- ... more steps ... -->
+  </div>
+</div>
+```
+
+### Step Management Logic
+
+The `goToStep()` function handles all navigation between steps:
+
+```javascript {10-19} title="app.js"
+function goToStep(n) {
+  for (let i=1; i<=5; i++) {
+    document.getElementById('page'+i).classList.toggle('active', i===n);
+    document.getElementById('nav'+i).classList.toggle('active', i===n);
+    const dot = document.getElementById('sd'+i);
+    const lbl = document.getElementById('sl'+i);
+    dot.className = 'step-dot ' + (i < n ? 'done' : i === n ? 'active' : '');
+    lbl.className = 'step-label ' + (i < n ? 'done' : i === n ? 'active' : '');
+    
+    // Mark completed steps with checkmark
+    dot.textContent = i < n ? '✓' : i;
+    
+    if (i < 5) {
+      document.getElementById('sline'+i).className = 'step-line ' + (i < n ? 'done' : '');
+    }
+  }
+  
+  currentStep = n;
+  window.currentStep = currentStep;
+  
+  // Trigger step-specific logic
+  if (n === 2) {
+    preloadInstallationsFromEquipment();
+    renderServiceChip();
+  }
+  
+  window.scrollTo(0,0);
+}
+```
+
+<Note>
+  The wizard automatically scrolls to the top when changing steps to ensure the user sees the entire form.
+</Note>
+
+## Step Validation
+
+Each step validates required data before enabling the "Next" button:
+
+### Step 1: Equipment Validation
+
+```javascript {3-6} title="app.js"
+function updateStep1NextButton() {
+  const btn = document.getElementById('btnStep1Next');
+  if (!btn) return;
+  
+  const hasItems = getSelectedEquipmentItems().length > 0;
+  
+  btn.disabled = !hasItems;
+  btn.style.opacity = hasItems ? '1' : '0.4';
+}
+```
+
+### Step 2: Service Validation
+
+```javascript {4-7} title="app.js"
+function updateStep2NextButton() {
+  const btn = document.getElementById('btnStep2Next');
+  if (!btn) return;
+  
+  const hasMulti = (serviceQtyMap.instalacion || 0) > 0 || (serviceQtyMap.mantencion || 0) > 0;
+  const hasSingle = !!selectedService;
+  const enabled = hasMulti || hasSingle;
+  
+  btn.disabled = !enabled;
+  btn.style.opacity = enabled ? '1' : '0.4';
+}
+```
+
+<Info>
+  Steps 3 (Accessories) and 4 (Client) do not require validation - users can proceed with or without adding accessories, and client information is optional.
+</Info>
+
+## Floating Action Buttons
+
+The wizard includes floating navigation buttons for mobile-friendly navigation:
+
+```javascript {10-20} title="index.html"
+<div class="wizard-nav" id="wizardNav">
+  <button class="wizard-nav-btn" id="btnWizardPrev" 
+          onclick="wizardPrevAction()">
+    <!-- Back arrow SVG -->
+  </button>
+  <button class="wizard-nav-btn" id="btnWizardNext" 
+          onclick="wizardNextAction()">
+    <!-- Forward arrow SVG -->
+  </button>
+</div>
+
+<script>
+function wizardNextAction() {
+  const step = window.currentStep || 1;
+  if (step === 1) return goToStep(2);
+  if (step === 2) return goToStep(3);
+  if (step === 3) return goToStep(4);
+  if (step === 4) {
+    buildSummary();
+    return goToStep(5);
+  }
+}
+</script>
+```
+
+## Bottom Navigation Bar
+
+A persistent bottom navigation bar provides quick access to all steps:
+
+```html title="index.html"
+<div class="bottom-nav">
+  <button class="nav-item active" id="nav1" onclick="goToStep(1)">
+    <span class="nav-icon"><i class="fas fa-snowflake"></i></span>Equipo
+  </button>
+  <button class="nav-item" id="nav2" onclick="goToStep(2)">
+    <span class="nav-icon"><i class="fas fa-wrench"></i></span>Servicio
+  </button>
+  <button class="nav-item" id="nav3" onclick="goToStep(3)">
+    <span class="nav-icon"><i class="fas fa-cart-shopping"></i></span>Extras
+  </button>
+  <button class="nav-item" id="nav4" onclick="goToStep(4)">
+    <span class="nav-icon"><i class="fas fa-user"></i></span>Cliente
+  </button>
+  <button class="nav-item" id="nav5" onclick="goToStep(5)">
+    <span class="nav-icon"><i class="fas fa-file-pdf"></i></span>PDF
+  </button>
+</div>
+```
+
+## Smart Pre-filling
+
+The wizard automatically pre-fills installation quantities based on equipment selection:
+
+```javascript {6-11} title="app.js"
+function preloadInstallationsFromEquipment() {
+  const equipCount = getEquipCount();
+  
+  if (equipCount === 0) {
+    serviceQtyMap.instalacion = 0;
+  } else if ((serviceQtyMap.instalacion || 0) === 0) {
+    // Pre-load default: 1 installation per equipment added
+    serviceQtyMap.instalacion = equipCount;
+  } else {
+    // Clamp if user removed equipment after setting installations
+    serviceQtyMap.instalacion = Math.min(serviceQtyMap.instalacion, equipCount);
+  }
+  
+  updateMultiServiceInputs();
+  updateStep2NextButton();
+  renderServiceGrid();
+}
+```
+
+<Tip>
+  When a user adds 3 air conditioning units in Step 1, the system automatically suggests 3 installations in Step 2, saving time and reducing errors.
+</Tip>
+
+## Equipment Summary Chip
+
+When moving to Step 2, a summary chip displays selected equipment:
+
+```javascript {6-16} title="app.js"
+function renderServiceChip() {
+  const chip = document.getElementById('acSelectionChip');
+  const selectedItems = getSelectedEquipmentItems();
+  if (!selectedItems.length) { chip.innerHTML = ''; return; }
+  
+  const equipCount = selectedItems.reduce((sum, item) => sum + item.qty, 0);
+  const equipTotal = selectedItems.reduce((sum, item) => 
+    sum + (item.cap.price_with_tax * item.qty), 0);
+  
+  chip.innerHTML = `
+    <div class="selection-chip">
+      <div class="chip-icon"><i class="fas fa-snowflake"></i></div>
+      <div class="chip-info">
+        <div class="chip-title">Equipos seleccionados: ${equipCount}</div>
+        <div class="chip-sub">${selectedItems.slice(0, 2).map(item => 
+          `${item.ac.brand_model} ${(item.btu/1000).toFixed(0)}K x${item.qty}`
+        ).join(' · ')}${selectedItems.length > 2 ? ' ...' : ''}</div>
+      </div>
+      <div class="chip-price">$${fmtNum(equipTotal)}</div>
+    </div>`;
+}
+```
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Equipment Catalog" icon="snowflake" href="/features/equipment-catalog">
+    Browse and filter air conditioning units
+  </Card>
+  <Card title="Service Types" icon="wrench" href="/features/service-types">
+    Configure installation, maintenance, and repair services
+  </Card>
+  <Card title="Client Management" icon="user" href="/features/client-management">
+    Capture and manage client information
+  </Card>
+  <Card title="PDF Generation" icon="file-pdf" href="/features/pdf-generation">
+    Generate professional quotation PDFs
+  </Card>
+</CardGroup>

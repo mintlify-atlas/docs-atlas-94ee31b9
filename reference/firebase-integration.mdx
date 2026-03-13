@@ -1,0 +1,606 @@
+---
+title: 'Firebase Integration'
+description: 'How CotizaClima uses Firebase Realtime Database and Authentication'
+icon: 'fire'
+---
+
+## Overview
+
+CotizaClima uses **Firebase Realtime Database** for data storage and **Firebase Authentication** for user sessions. The integration is designed to work **offline-first** with graceful fallbacks.
+
+<Note>
+  Firebase is optional. The app works fully offline with demo data and only syncs when Firebase is available.
+</Note>
+
+## Firebase Configuration
+
+### Database Connection
+
+Configured directly in `app.js`:
+
+```javascript app.js:64-68
+const FIREBASE_CONNECTION = {
+  databaseURL: 'https://cotizaciones-app-ece65-default-rtdb.firebaseio.com/',
+  node: 'air_conditioners', // Node where equipment array lives
+  authToken: '' // Optional: token/secret if rules require auth for reading
+};
+```
+
+### Authentication Configuration
+
+Configured in `firebase-auth.js`:
+
+```javascript firebase-auth.js:4-6
+const FIREBASE_AUTH_CONFIG = {
+  apiKey: 'AIzaSyAIvIig9S0bQPYDf_eilrPB7lWbiWPy9EU'
+};
+```
+
+<Warning>
+  These credentials are public in client-side code. Use Firebase Security Rules to protect your data.
+</Warning>
+
+## Authentication Flow
+
+### Session Storage Strategy
+
+Auth tokens are stored in `sessionStorage` (cleared on browser close):
+
+```javascript firebase-auth.js:8-23
+function readSession() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeSession(session) {
+  sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+function clearSession() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+}
+```
+
+### Sign In Process
+
+<Steps>
+  <Step title="User enters credentials">
+    Email and password collected via modal or login page.
+  </Step>
+  
+  <Step title="Call Firebase Auth API">
+    ```javascript firebase-auth.js:96-117
+    async function signIn(email, password) {
+      const data = await authRequest('accounts:signInWithPassword', {
+        email,
+        password,
+        returnSecureToken: true
+      });
+    
+      const nowSec = Math.floor(Date.now() / 1000);
+      const expiresIn = Number(data.expiresIn || 3600);
+      const jwt = parseJwt(data.idToken) || {};
+    
+      const session = {
+        idToken: data.idToken,
+        refreshToken: data.refreshToken,
+        uid: data.localId || jwt.user_id || '',
+        email: data.email || jwt.email || email,
+        expiresAt: nowSec + expiresIn - 30
+      };
+    
+      writeSession(session);
+      return { uid: session.uid, email: session.email };
+    }
+    ```
+  </Step>
+  
+  <Step title="Store session data">
+    Session includes:
+    - `idToken` - JWT token for API requests
+    - `refreshToken` - Token for refreshing expired sessions
+    - `uid` - User ID
+    - `email` - User email
+    - `expiresAt` - Token expiration timestamp
+  </Step>
+  
+  <Step title="Update UI">
+    Enable history and client directory features.
+  </Step>
+</Steps>
+
+### Token Refresh
+
+Tokens automatically refresh when expired:
+
+```javascript firebase-auth.js:61-94
+async function refreshIdToken(refreshToken) {
+  const apiKey = getApiKey();
+  const endpoint = `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`;
+  const form = new URLSearchParams();
+  form.set('grant_type', 'refresh_token');
+  form.set('refresh_token', refreshToken);
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString()
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expiresIn = Number(data.expires_in || 3600);
+  const jwt = parseJwt(data.id_token) || {};
+
+  const session = {
+    idToken: data.id_token,
+    refreshToken: data.refresh_token,
+    uid: data.user_id || jwt.user_id || '',
+    email: jwt.email || '',
+    expiresAt: nowSec + expiresIn - 30
+  };
+
+  writeSession(session);
+  return session.idToken;
+}
+```
+
+### Getting Valid Token
+
+```javascript firebase-auth.js:129-149
+async function getValidIdToken() {
+  const session = readSession();
+  if (!session || !session.idToken) return null;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (session.expiresAt && session.expiresAt > nowSec) {
+    return session.idToken; // Still valid
+  }
+
+  if (!session.refreshToken) {
+    clearSession();
+    return null;
+  }
+
+  try {
+    return await refreshIdToken(session.refreshToken);
+  } catch (e) {
+    clearSession();
+    return null;
+  }
+}
+```
+
+## Data Loading
+
+### Equipment Data Loading
+
+<Steps>
+  <Step title="Build Firebase endpoint">
+    ```javascript app.js:333-352
+    function buildFirebaseEndpoint(url, node, authToken = '') {
+      const cleanUrl = (url || '').trim().replace(/\/$/, '');
+      const safeNode = (node || 'air_conditioners').replace(/^\/+|\/+$/g, '');
+      let endpoint = '';
+    
+      if (/\.json(\?|$)/i.test(cleanUrl)) {
+        endpoint = cleanUrl;
+      } else if (cleanUrl.endsWith(`/${safeNode}`)) {
+        endpoint = `${cleanUrl}.json`;
+      } else {
+        endpoint = `${cleanUrl}/${safeNode}.json`;
+      }
+    
+      if (authToken) {
+        const separator = endpoint.includes('?') ? '&' : '?';
+        endpoint += `${separator}auth=${encodeURIComponent(authToken)}`;
+      }
+    
+      return endpoint;
+    }
+    ```
+  </Step>
+  
+  <Step title="Fetch data with fallback">
+    ```javascript app.js:237-272
+    async function loadFromFirebase(url, node, authToken = '') {
+      const cleanUrl = url.replace(/\/$/, '');
+      const endpoint = buildFirebaseEndpoint(cleanUrl, node, authToken);
+    
+      try {
+        showFirebaseStatus('connecting');
+        const res = await fetch(endpoint);
+    
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
+        const raw = await res.json();
+        if (!raw) throw new Error('El nodo está vacío en Firebase');
+    
+        const data = normalizeFirebaseArrays(raw);
+    
+        if (!Array.isArray(data) || data.length === 0) {
+          throw new Error('No se encontraron equipos');
+        }
+    
+        allAC = data;
+        filteredAC = [...allAC];
+        renderBrandFilterOptions();
+        renderACGrid();
+        updateStep1NextButton();
+        showFirebaseStatus('ok', `${data.length} equipos cargados`);
+        showToast(`${data.length} equipos actualizados`, 'success');
+    
+      } catch(e) {
+        showFirebaseStatus('error', e.message);
+        showToast('Firebase: usando datos demo', 'error');
+        if (!Array.isArray(allAC) || allAC.length === 0) loadDemoData();
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Normalize Firebase arrays">
+    Firebase stores arrays as objects with numeric keys. This function converts them back:
+    
+    ```javascript app.js:309-331
+    function normalizeFirebaseArrays(obj) {
+      if (obj === null || obj === undefined) return obj;
+      if (Array.isArray(obj)) return obj.map(normalizeFirebaseArrays);
+    
+      if (typeof obj === 'object') {
+        const keys = Object.keys(obj);
+        const allNumeric = keys.length > 0 && keys.every(k => /^\d+$/.test(k));
+    
+        if (allNumeric) {
+          // Is an array disguised as an object
+          return keys
+            .sort((a, b) => Number(a) - Number(b))
+            .map(k => normalizeFirebaseArrays(obj[k]));
+        }
+    
+        // Normal object → normalize values recursively
+        const result = {};
+        keys.forEach(k => result[k] = normalizeFirebaseArrays(obj[k]));
+        return result;
+      }
+    
+      return obj;
+    }
+    ```
+  </Step>
+</Steps>
+
+### Parallel Loading
+
+Equipment and accessories load in parallel:
+
+```javascript app.js:174-177
+await Promise.all([
+  loadFromFirebase(activeUrl, activeNode, activeToken),
+  loadAccessoriesFromFirebase(activeUrl, activeToken)
+]);
+```
+
+## Quote Persistence
+
+### Database Structure
+
+```plaintext
+firebase-root/
+├── air_conditioners/          # Equipment catalog (array)
+├── accessories/               # Accessories catalog (array)
+├── quotes/
+│   └── {userId}/
+│       ├── {quoteId1}/        # Quote data
+│       ├── {quoteId2}/
+│       └── ...
+├── clients/
+│   └── {userId}/
+│       ├── {rutKey1}/         # Client record
+│       ├── {rutKey2}/
+│       └── ...
+└── rankings/
+    └── {userId}/
+        ├── {modelKey1}/       # Popularity counter
+        ├── {modelKey2}/
+        └── ...
+```
+
+### Saving Quotes
+
+```javascript quotes-repo.js:51-78
+async function saveQuote(uid, idToken, quotePayload, quoteId) {
+  const now = Date.now();
+  const basePayload = {
+    ...quotePayload,
+    ownerUid: uid,
+    updatedAt: now,
+    createdAt: quotePayload && quotePayload.createdAt ? quotePayload.createdAt : now
+  };
+
+  if (quoteId) {
+    // Update existing quote
+    await request(`quotes/${uid}/${quoteId}`, idToken, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(basePayload)
+    });
+    return { id: quoteId, payload: basePayload };
+  }
+
+  // Create new quote
+  const created = await request(`quotes/${uid}`, idToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(basePayload)
+  });
+
+  const id = created && created.name ? created.name : null;
+  if (!id) throw new Error('No se pudo crear la cotización (sin id).');
+  return { id, payload: basePayload };
+}
+```
+
+### Loading Quote List
+
+```javascript quotes-repo.js:36-43
+async function listQuotes(uid, idToken) {
+  const raw = await request(`quotes/${uid}`, idToken, { method: 'GET' });
+  if (!raw || typeof raw !== 'object') return [];
+
+  return Object.entries(raw)
+    .map(([id, payload]) => ({ id, ...(payload || {}) }))
+    .sort((a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0));
+}
+```
+
+## Client Directory Sync
+
+### RUT-Based Deduplication
+
+Clients are stored with normalized RUT as key:
+
+```javascript client-repo.js:108-156
+async function syncClientForQuote(uid, idToken, clientObject, quoteId) {
+  if (!clientObject || !clientObject.name) return null;
+  const clientId = resolveClientId(clientObject);
+  if (!clientId) return null; // No RUT → skip
+
+  try {
+    const now = Date.now();
+
+    // Fetch existing to preserve createdAt and quoteIds
+    let existing = null;
+    try {
+      existing = await request('clients/' + uid + '/' + clientId, idToken, { method: 'GET' });
+    } catch (e) {
+      existing = null;
+    }
+
+    const quoteIds = Object.assign({}, existing ? (existing.quoteIds || {}) : {});
+    if (quoteId) quoteIds[quoteId] = true;
+
+    const payload = {
+      name: clientObject.name || '',
+      rut: clientObject.rut || '',
+      rutKey: clientId,
+      phone: clientObject.phone || '',
+      email: clientObject.email || '',
+      address: clientObject.address || '',
+      city: clientObject.city || '',
+      region: clientObject.region || '',
+      property: clientObject.property || '',
+      notes: clientObject.notes || '',
+      createdAt: (existing && existing.createdAt) ? existing.createdAt : now,
+      updatedAt: now,
+      quoteIds: quoteIds
+    };
+
+    await request('clients/' + uid + '/' + clientId, idToken, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    return clientId;
+  } catch (e) {
+    // Silently fail — background operation
+    return null;
+  }
+}
+```
+
+<Info>
+  Client sync is **fire-and-forget**. It runs in background and never blocks quote generation.
+</Info>
+
+## Equipment Ranking
+
+### Atomic Increment
+
+Uses Firebase server-side increment to avoid race conditions:
+
+```javascript ranking-repo.js:46-72
+async function incrementAcRankings(uid, idToken, equipmentSelections) {
+  if (!uid || !idToken || !Array.isArray(equipmentSelections) || equipmentSelections.length === 0) return;
+
+  // Deduplicate by brandModel
+  const seen = new Set();
+  const unique = equipmentSelections.filter(function (item) {
+    const key = modelKey(item.brandModel);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  await Promise.all(unique.map(function (item) {
+    const key = modelKey(item.brandModel);
+    const body = {
+      marca: item.marca || '',
+      brandModel: item.brandModel || '',
+      count: { '.sv': { increment: 1 } },    // Server-side atomic increment
+      updatedAt: { '.sv': 'timestamp' }      // Server timestamp
+    };
+    return request('rankings/' + uid + '/' + key, idToken, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }));
+}
+```
+
+### Loading Rankings
+
+```javascript ranking-repo.js:78-88
+async function getRankings(uid, idToken) {
+  const raw = await request('rankings/' + uid, idToken, { method: 'GET' });
+  if (!raw || typeof raw !== 'object') return {};
+  var result = {};
+  Object.entries(raw).forEach(function (entry) {
+    const key = entry[0];
+    const val = entry[1];
+    result[key] = (val && typeof val.count === 'number') ? val.count : 0;
+  });
+  return result;
+}
+```
+
+## Error Handling
+
+### Demo Mode Fallback
+
+When Firebase fails, app switches to demo mode:
+
+```javascript app.js:267-271
+catch(e) {
+  showFirebaseStatus('error', e.message);
+  showToast('Firebase: usando datos demo', 'error');
+  if (!Array.isArray(allAC) || allAC.length === 0) loadDemoData();
+}
+```
+
+### Firebase Status Indicator
+
+```javascript app.js:354-367
+function showFirebaseStatus(type, msg) {
+  const dot = document.getElementById('fbStatusDot');
+  if (!dot) return;
+  if (type === 'connecting') {
+    dot.style.background = 'rgba(201,168,76,0.8)';
+    dot.title = 'Conectando con Firebase…';
+  } else if (type === 'ok') {
+    dot.style.background = '#6fcf97';
+    dot.title = msg || 'Firebase conectado';
+  } else {
+    dot.style.background = 'rgba(255,100,80,0.7)';
+    dot.title = msg || 'Error Firebase — usando datos demo';
+  }
+}
+```
+
+### Silent Background Sync
+
+Non-critical operations fail silently:
+
+```javascript quote-persistence.js:60-68
+// Sync client directory in background (fire-and-forget, must not block user flow)
+if (window.ClientRepo && payload.client && payload.client.name) {
+  window.ClientRepo.syncClientForQuote(auth.user.uid, auth.idToken, payload.client, result.id).catch(function() {});
+}
+
+// Sync AC ranking counters in background (fire-and-forget)
+if (window.RankingRepo && payload.equipmentSelections && payload.equipmentSelections.length) {
+  window.RankingRepo.incrementAcRankings(auth.user.uid, auth.idToken, payload.equipmentSelections).catch(function() {});
+}
+```
+
+## Security Rules
+
+### Recommended Firebase Rules
+
+```json
+{
+  "rules": {
+    "air_conditioners": {
+      ".read": true,
+      ".write": false
+    },
+    "accessories": {
+      ".read": true,
+      ".write": false
+    },
+    "quotes": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        "$quoteId": {
+          ".validate": "newData.hasChildren(['ownerUid', 'updatedAt']) && newData.child('ownerUid').val() == $uid"
+        }
+      }
+    },
+    "clients": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "rankings": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    }
+  }
+}
+```
+
+<Warning>
+  Equipment and accessories are **public read, admin write**. Only authenticated users can read/write their own quotes, clients, and rankings.
+</Warning>
+
+## API Endpoints Used
+
+### Firebase Auth REST API
+
+```javascript
+https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={apiKey}
+https://securetoken.googleapis.com/v1/token?key={apiKey}
+```
+
+### Firebase Realtime Database REST API
+
+```javascript
+{databaseURL}/air_conditioners.json
+{databaseURL}/accessories.json
+{databaseURL}/quotes/{uid}.json?auth={idToken}
+{databaseURL}/quotes/{uid}/{quoteId}.json?auth={idToken}
+{databaseURL}/clients/{uid}/{rutKey}.json?auth={idToken}
+{databaseURL}/rankings/{uid}/{modelKey}.json?auth={idToken}
+```
+
+## Authentication Errors
+
+Error messages are mapped to Spanish:
+
+```javascript firebase-auth.js:151-160
+function mapAuthError(message) {
+  const map = {
+    EMAIL_NOT_FOUND: 'Usuario no encontrado.',
+    INVALID_PASSWORD: 'Contraseña incorrecta.',
+    USER_DISABLED: 'Usuario deshabilitado.',
+    INVALID_EMAIL: 'Correo inválido.',
+    TOO_MANY_ATTEMPTS_TRY_LATER: 'Demasiados intentos. Intenta más tarde.'
+  };
+  return map[message] || message;
+}
+```

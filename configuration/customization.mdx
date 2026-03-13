@@ -1,0 +1,523 @@
+---
+title: 'Customization'
+description: 'Customize branding, styling, and company information in CotizaClima'
+---
+
+## Overview
+
+CotizaClima is fully customizable to match your company's branding. You can modify colors, logos, company information, and PDF appearance.
+
+---
+
+## Company Branding in PDFs
+
+### Logo Configuration
+
+The PDF logo is configured in `app.js` using a Base64-encoded PNG:
+
+```javascript app.js
+// Your company logo as Base64 PNG
+const PDF_LOGO_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAB9AAAAZuCAYAAAAcj73IAAEAAElEQVR...';
+```
+
+<Steps>
+  <Step title="Prepare Your Logo">
+    1. Create a PNG logo (recommended size: 200×200px)
+    2. Use transparent background
+    3. Keep file size under 100KB
+    4. Convert to Base64 using online tools like [base64-image.de](https://www.base64-image.de/)
+  </Step>
+
+  <Step title="Update PDF_LOGO_BASE64">
+    Replace the value of `PDF_LOGO_BASE64` in `app.js` with your Base64 string:
+    
+    ```javascript app.js
+    const PDF_LOGO_BASE64 = 'data:image/png;base64,iVBORw0KGgo...';
+    // OR just the Base64 string without prefix:
+    const PDF_LOGO_BASE64 = 'iVBORw0KGgo...';
+    ```
+  </Step>
+
+  <Step title="Test PDF Generation">
+    1. Create a test quote
+    2. Generate PDF
+    3. Verify your logo appears in the PDF header
+  </Step>
+</Steps>
+
+<Tip>
+  **Supported Formats:** The app automatically normalizes both `data:image/png;base64,...` and plain Base64 strings.
+</Tip>
+
+### Company Name and Tagline
+
+Edit the PDF generation function in `app.js` around line 1169:
+
+```javascript app.js
+// Company name in PDF header
+doc.setFontSize(20);
+doc.setFont('helvetica', 'bold');
+doc.text('RefriPro Climatización', titleX, titleY);  // ← Change this
+
+// Company tagline
+doc.setFontSize(8);
+doc.setFont('helvetica', 'normal');
+doc.text('"Controlamos el Clima"', titleX, subtitleY);  // ← Change this
+```
+
+Replace with your company name and tagline:
+
+```javascript app.js
+doc.text('Tu Empresa HVAC', titleX, titleY);
+doc.text('"Expertos en Climatización"', titleX, subtitleY);
+```
+
+### Quote Validity Period
+
+By default, quotes are valid for 15 days. To change this:
+
+```javascript app.js
+// In generatePDF() function, around line 1182
+doc.text('Válido por 15 días', pageW - margin, metaY3, { align: 'right' });
+```
+
+Change to your desired validity period:
+
+```javascript app.js
+doc.text('Válido por 30 días', pageW - margin, metaY3, { align: 'right' });
+```
+
+---
+
+## Application Branding
+
+### App Header Logo
+
+Edit the header section in `index.html`:
+
+```html index.html
+<div class="logo">
+  <div class="logo-icon"><i class="fas fa-snowflake"></i></div>
+  <div class="logo-text">Cotiza<span>Clima</span></div>
+</div>
+```
+
+Customize the text:
+
+```html index.html
+<div class="logo-text">Tu<span>Empresa</span></div>
+```
+
+Or replace with an image:
+
+```html index.html
+<div class="logo">
+  <img src="assets/img/logo.png" alt="Tu Empresa" style="height: 36px;">
+</div>
+```
+
+### Favicon
+
+Add a favicon by placing your icon file in the project root and adding to `index.html`:
+
+```html index.html
+<head>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <!-- ... existing head content -->
+</head>
+```
+
+---
+
+## Color Scheme
+
+Colors are defined in CSS custom properties in `styles.css`:
+
+```css styles.css
+:root {
+  --bg: #f4f2ee;              /* Background color */
+  --surface: #ffffff;         /* Card background */
+  --card: #ffffff;            /* Card color */
+  --card2: #f0ede8;           /* Secondary card color */
+  --border: #d8d2c8;          /* Border color */
+  --accent: #1a3a5c;          /* Primary brand color */
+  --accent2: #8b2e0f;         /* Secondary accent (orange) */
+  --accent3: #2d5a3d;         /* Tertiary accent (green) */
+  --text: #1a1612;            /* Main text color */
+  --text-dim: #4a4238;        /* Dimmed text */
+  --text-muted: #9a9088;      /* Muted text */
+  --green: #2d5a3d;           /* Success color */
+  --red: #8b2e0f;             /* Error/danger color */
+  --yellow: #7a5c1e;          /* Warning color */
+  --gold: #c9a84c;            /* Accent gold */
+}
+```
+
+### Customizing Colors
+
+<Tabs>
+  <Tab title="Professional Blue">
+    ```css styles.css
+    :root {
+      --accent: #2563eb;        /* Blue primary */
+      --accent2: #dc2626;       /* Red secondary */
+      --accent3: #16a34a;       /* Green tertiary */
+      --gold: #f59e0b;          /* Gold accent */
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Modern Green">
+    ```css styles.css
+    :root {
+      --accent: #059669;        /* Emerald primary */
+      --accent2: #ea580c;       /* Orange secondary */
+      --accent3: #0284c7;       /* Sky tertiary */
+      --gold: #fbbf24;          /* Amber accent */
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Bold Dark">
+    ```css styles.css
+    :root {
+      --bg: #18181b;            /* Dark background */
+      --surface: #27272a;       /* Dark cards */
+      --accent: #3b82f6;        /* Bright blue */
+      --text: #f4f4f5;          /* Light text */
+      --border: #3f3f46;        /* Dark borders */
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  After changing colors, test the app thoroughly to ensure sufficient contrast and readability.
+</Warning>
+
+---
+
+## Typography
+
+CotizaClima uses three font families:
+
+```html index.html
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Lato:wght@300;400;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+```
+
+### Font Usage
+
+| Element | Font Family | Usage |
+|---------|-------------|-------|
+| Headings | Cormorant Garamond | Section titles, PDF headers |
+| Body Text | Lato | All interface text |
+| Numbers/Codes | DM Mono | Prices, quote numbers, BTU values |
+
+### Changing Fonts
+
+<Steps>
+  <Step title="Choose Fonts">
+    Select replacement fonts from [Google Fonts](https://fonts.google.com/)
+  </Step>
+
+  <Step title="Update Font Link">
+    Replace the Google Fonts link in `index.html`:
+    ```html index.html
+    <link href="https://fonts.googleapis.com/css2?family=Your+Font&display=swap" rel="stylesheet">
+    ```
+  </Step>
+
+  <Step title="Update CSS">
+    Replace font references in `styles.css`:
+    ```css styles.css
+    body {
+      font-family: 'Your Body Font', sans-serif;
+    }
+    
+    .section-title {
+      font-family: 'Your Heading Font', serif;
+    }
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Form Fields
+
+### Client Form Customization
+
+The client form is in `index.html` starting at line 159. Customize fields as needed:
+
+<CodeGroup>
+
+```html Add a Field
+<div class="form-group">
+  <label class="form-label">Company Name</label>
+  <input 
+    type="text" 
+    class="form-input" 
+    id="clientCompany" 
+    placeholder="Empresa S.A."
+  >
+</div>
+```
+
+```html Remove a Field
+<!-- Comment out or delete fields you don't need -->
+<!-- 
+<div class="form-group">
+  <label class="form-label">RUT</label>
+  <input type="text" class="form-input" id="clientRut">
+</div>
+-->
+```
+
+```html Modify Region List
+<select class="form-select-full" id="clientRegion">
+  <option value="">Seleccionar</option>
+  <option value="Region Norte">Región Norte</option>
+  <option value="Region Sur">Región Sur</option>
+  <!-- Add your regions -->
+</select>
+```
+
+</CodeGroup>
+
+<Note>
+  If you add custom fields, update `getClientSnapshot()` in `app.js` to include them in saved quotes.
+</Note>
+
+### Default Region Selection
+
+Change the default selected region in `index.html`:
+
+```html index.html
+<!-- Change from -->
+<option value="Maule" selected>Maule</option>
+
+<!-- To your default region -->
+<option value="Metropolitana" selected>Metropolitana</option>
+```
+
+---
+
+## Quote Number Format
+
+Quote numbers use the format `CL-YYYY-####` (e.g., `CL-2026-0001`). Customize in `app.js`:
+
+```javascript app.js
+function buildQuoteNumber(datePart, sequence) {
+  // Current format: CL-2026-0001
+  return `CL-${datePart}-${String(Math.max(1, Number(sequence) || 1)).padStart(4, '0')}`;
+  
+  // Change to your format:
+  // return `QUOTE-${datePart}-${String(sequence).padStart(5, '0')}`;
+  // Result: QUOTE-2026-00001
+}
+```
+
+### Date Part Configuration
+
+By default, uses full year (2026). Change the date format:
+
+```javascript app.js
+function getQuoteDatePart(date = new Date()) {
+  // Current: full year
+  return String(date.getFullYear());
+  
+  // Option 1: Year + Month (202603)
+  // const year = date.getFullYear();
+  // const month = String(date.getMonth() + 1).padStart(2, '0');
+  // return `${year}${month}`;
+  
+  // Option 2: Short year (26)
+  // return String(date.getFullYear()).slice(-2);
+}
+```
+
+---
+
+## PDF Styling
+
+### PDF Colors
+
+PDF colors are defined in the `generatePDF()` function in `app.js`:
+
+```javascript app.js
+// Header background
+doc.setFillColor(242, 244, 247);  // Light gray
+
+// Accent stripe
+doc.setFillColor(79, 102, 132);   // Blue-gray
+
+// Section headers
+doc.setFillColor(31, 53, 82);     // Dark blue
+
+// Footer
+doc.setFillColor(31, 53, 82);     // Dark blue
+```
+
+Change RGB values to match your brand colors:
+
+```javascript app.js
+// Example: Change to green theme
+doc.setFillColor(34, 197, 94);    // Emerald green
+```
+
+### PDF Footer
+
+Customize the footer text around line 1376:
+
+```javascript app.js
+doc.text('RefriPro · Generado con CotizaClima App', margin + 4, pageH - 9);
+```
+
+Change to your company name:
+
+```javascript app.js
+doc.text('Tu Empresa · Sistema de Cotizaciones', margin + 4, pageH - 9);
+```
+
+---
+
+## GPS Address Feature
+
+The GPS address autofill uses OpenStreetMap's Nominatim API. The status messages can be customized in `app.js`:
+
+```javascript app.js
+function setGpsStatus(message, isError = false) {
+  const statusEl = document.getElementById('gpsAddressStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.style.color = isError ? 'var(--red)' : 'var(--text-muted)';
+}
+```
+
+Customize messages in `index.html`:
+
+```html index.html
+<div class="notes-hint" id="gpsAddressStatus">
+  Permite autocompletar direccion y ciudad desde tu ubicacion actual.
+</div>
+```
+
+---
+
+## Accessibility Customization
+
+### Aria Labels
+
+The app includes ARIA labels for screen readers. Customize in `index.html`:
+
+```html index.html
+<button 
+  aria-label="Abrir menu" 
+  aria-expanded="false"
+>
+  Menu
+</button>
+```
+
+### Focus Styles
+
+Customize keyboard navigation focus in `styles.css`:
+
+```css styles.css
+.form-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(26,58,92,0.08);
+}
+```
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Brand Consistency" icon="palette">
+    Use consistent colors across:
+    - App interface
+    - PDF quotes
+    - Company materials
+  </Card>
+  
+  <Card title="Readable Fonts" icon="eye">
+    Ensure fonts are:
+    - Legible at small sizes
+    - Professional appearance
+    - Web-safe or properly loaded
+  </Card>
+  
+  <Card title="Test PDFs" icon="file-pdf">
+    After customization:
+    - Generate test PDFs
+    - Verify logo quality
+    - Check color rendering
+  </Card>
+  
+  <Card title="Backup Configuration" icon="floppy-disk">
+    Before making changes:
+    - Save original files
+    - Document changes
+    - Test thoroughly
+  </Card>
+</CardGroup>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Logo not appearing in PDF">
+    **Check:**
+    1. `PDF_LOGO_BASE64` is a valid Base64 PNG
+    2. Base64 string is not truncated
+    3. File size is reasonable (< 200KB)
+    4. Image format is PNG (not JPEG)
+    
+    **Test Base64:**
+    Paste your Base64 string into [base64.guru](https://base64.guru/converter/decode/image) to verify it's valid.
+  </Accordion>
+
+  <Accordion title="Colors not updating">
+    **Solutions:**
+    1. Clear browser cache (Ctrl+Shift+R)
+    2. Check that CSS file is saved
+    3. Verify color values are valid CSS
+    4. Ensure no syntax errors in `:root` block
+  </Accordion>
+
+  <Accordion title="Custom fonts not loading">
+    **Check:**
+    1. Google Fonts link is correct
+    2. Font names match exactly (case-sensitive)
+    3. Fallback fonts are specified
+    4. No ad blockers blocking Google Fonts
+  </Accordion>
+
+  <Accordion title="Form fields not saving">
+    **If you added custom fields:**
+    1. Update `getClientSnapshot()` to include new field IDs
+    2. Update `buildSummary()` to display values
+    3. Update PDF generation if needed
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Firebase Setup" icon="database" href="./firebase-setup">
+    Configure Firebase for data persistence
+  </Card>
+  
+  <Card title="Equipment Data" icon="snowflake" href="./equipment-data">
+    Set up your equipment catalog
+  </Card>
+  
+  <Card title="Service Pricing" icon="dollar-sign" href="./service-pricing">
+    Configure service types and pricing
+  </Card>
+</CardGroup>

@@ -1,0 +1,471 @@
+---
+title: PDF Generation
+description: Generate professional quotation PDFs with jsPDF, including equipment, services, pricing, and custom branding
+icon: file-pdf
+---
+
+CotizaClima generates professional PDF quotations using jsPDF and jsPDF-AutoTable. The generated PDFs include complete quotation details, service descriptions, pricing breakdowns, and optional company branding.
+
+## PDF Library Integration
+
+The application uses two jsPDF libraries:
+
+```html title="index.html"
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.6.0/jspdf.plugin.autotable.min.js"></script>
+```
+
+- **jsPDF**: Core PDF generation library
+- **jsPDF-AutoTable**: Plugin for creating tables with automatic pagination
+
+## PDF Generation Flow
+
+```javascript {2-5,8-10,13-15} title="app.js"
+async function generatePDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ 
+    orientation: 'portrait', 
+    unit: 'mm', 
+    format: 'a4' 
+  });
+  
+  const pageW = 210, margin = 18;
+  let y = 0;
+  
+  // 1. Header with logo and company info
+  y = await renderPdfHeader(doc, pageW, margin);
+  
+  // 2. Client information section
+  y = renderClientSection(doc, y, margin, pageW);
+  
+  // 3. Equipment and services table
+  y = await renderItemsTable(doc, y, margin, pageW);
+  
+  // 4. Pricing totals
+  y = renderTotals(doc, y, pageW, margin);
+  
+  // 5. Service notes
+  y = renderNotes(doc, y, margin, pageW);
+  
+  // 6. Service-specific information
+  y = appendServiceInfoToPdf(doc, y, margin, pageW, selectedServiceItems);
+  
+  // 7. Footer
+  renderFooter(doc, pageW);
+  
+  doc.save(`${quoteNumber}.pdf`);
+  showToast('PDF generado correctamente', 'success');
+}
+```
+
+## PDF Header with Branding
+
+The header includes optional company logo and quotation metadata:
+
+```javascript {8-16,20-26,29-33} title="app.js"
+const headerH = 28;
+const headerBottomGap = 8;
+
+// Background rectangles
+doc.setFillColor(242, 244, 247);
+doc.rect(0, 0, pageW, headerH, 'F');
+doc.setFillColor(79, 102, 132);
+doc.rect(0, 0, 4, headerH, 'F'); // Left accent bar
+
+// Company logo (optional)
+const logoSize = 20;
+const logoX = 18;
+const logoY = ((titleY + 13) / 2) - (logoSize / 2);
+
+const logoSource = await getPdfLogoSource();
+if (logoSource) {
+  doc.addImage(logoSource, 'PNG', logoX, logoY, logoSize, logoSize, undefined, 'NONE');
+  titleX = logoX + logoSize + 4;
+}
+
+// Company name and tagline
+doc.setTextColor(33, 37, 41);
+doc.setFontSize(20);
+doc.setFont('helvetica', 'bold');
+doc.text('RefriPro Climatización', titleX, titleY);
+
+doc.setTextColor(92, 99, 112);
+doc.setFontSize(8);
+doc.setFont('helvetica', 'normal');
+doc.text('"Controlamos el Clima"', titleX, subtitleY);
+
+// Quote metadata (right-aligned)
+doc.setTextColor(106, 112, 124);
+doc.setFontSize(7.5);
+doc.text(document.getElementById('sumQuoteNum').textContent, pageW - margin, metaY1, { align: 'right' });
+doc.text(document.getElementById('sumDate').textContent, pageW - margin, metaY2, { align: 'right' });
+doc.text('Válido por 15 días', pageW - margin, metaY3, { align: 'right' });
+```
+
+<Info>
+  The logo is loaded from a base64-encoded PNG. Set the `PDF_LOGO_BASE64` constant to include your company logo.
+</Info>
+
+## Client Information Section
+
+Client details are displayed in a structured format:
+
+```javascript {2,5-14} title="app.js"
+// Section header
+sectionHeader(doc, '  DATOS DEL CLIENTE', margin, y, pageW - margin*2);
+y += 10;
+
+const clientData = [
+  ['Nombre', clientName],
+  ...(clientRut ? [['RUT', clientRut]] : []),
+  ['Teléfono', clientPhone],
+  ...(clientEmail ? [['Email', clientEmail]] : []),
+  ['Dirección', `${clientAddress}${clientCity?', '+clientCity:''}${clientRegion?', '+clientRegion:''}`],
+  ...(clientProperty ? [['Inmueble', clientProperty]] : []),
+];
+
+clientData.forEach(([label, val]) => {
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(73, 89, 114);
+  doc.text(label + ':', margin + 2, y);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(31, 41, 55);
+  doc.text(val, margin + 35, y);
+  
+  y += 6;
+});
+```
+
+### Section Header Helper
+
+```javascript title="app.js"
+function sectionHeader(doc, text, x, y, w) {
+  doc.setFillColor(31, 53, 82);
+  doc.rect(x, y - 5, w, 8, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text(text, x + 2, y);
+}
+```
+
+## Equipment and Services Table
+
+The main table uses jsPDF-AutoTable for automatic pagination:
+
+```javascript {5-15,18-35,40-48} title="app.js"
+const selectedEquipItems = getSelectedEquipmentItems();
+const selectedServiceItems = getSelectedServiceItems();
+const activeExtras = ACCESSORIES.filter(acc => (accQty[acc.id]||0) > 0);
+
+const tableBody = [];
+
+// Add equipment rows
+selectedEquipItems.forEach(item => {
+  tableBody.push([
+    `${item.ac.brand_model}\n${item.ac.type} · ${item.ac.refrigerant} · Kit ${item.ac.installation_kit}`,
+    `${(item.btu/1000).toFixed(0)}.000 BTU`,
+    String(item.qty),
+    `$${fmtNum(item.cap.net_price)}`,
+    `$${fmtNum(item.cap.price_with_tax * item.qty)}`
+  ]);
+});
+
+// Add service rows
+selectedServiceItems.forEach(item => {
+  const serviceDesc = `${item.svc.name}\n${item.svc.desc} · ${item.qty} x $${fmtNum(item.unitPrice)}`;
+  tableBody.push([
+    serviceDesc,
+    'Servicio',
+    String(item.qty),
+    item.totalPrice > 0 ? `$${fmtNum(Math.round(item.totalPrice/1.19))}` : '$0',
+    item.totalPrice > 0 ? `$${fmtNum(item.totalPrice)}` : 'Sin costo'
+  ]);
+});
+
+// Add accessory rows
+activeExtras.forEach(acc => {
+  const q = accQty[acc.id];
+  tableBody.push([
+    `${acc.name}\n${acc.desc}`,
+    'Accesorio',
+    String(q),
+    `$${fmtNum(acc.price)}`,
+    `$${fmtNum(acc.price * q)}`
+  ]);
+});
+
+// Render table
+doc.autoTable({
+  startY: y,
+  head: [['DESCRIPCIÓN', 'TIPO', 'CANT.', 'P. NETO', 'P. c/IVA']],
+  body: tableBody,
+  margin: { left: margin, right: margin },
+  styles: { fontSize: 8, font: 'helvetica', cellPadding: 4 },
+  headStyles: {
+    fillColor: [31, 53, 82],
+    textColor: [255, 255, 255],
+    fontStyle: 'bold'
+  },
+  alternateRowStyles: { fillColor: [247, 248, 250] },
+  columnStyles: {
+    0: { cellWidth: 82 },
+    1: { cellWidth: 22, halign: 'center' },
+    2: { cellWidth: 14, halign: 'center' },
+    3: { cellWidth: 28, halign: 'right' },
+    4: { cellWidth: 28, halign: 'right', fontStyle: 'bold' }
+  },
+});
+
+y = doc.lastAutoTable.finalY + 8;
+```
+
+<Note>
+  The `\n` character creates multi-line cells. AutoTable automatically wraps long text.
+</Note>
+
+## Pricing Totals
+
+The totals section displays subtotal, discount, and final total:
+
+```javascript {12-22,27-32} title="app.js"
+const equipP = parseFloat(document.getElementById('sumEquipPrice').value) || 0;
+const svcP = parseFloat(document.getElementById('sumServicePrice').value) || 0;
+let extrasP = 0;
+ACCESSORIES.forEach(acc => { extrasP += (accQty[acc.id]||0) * acc.price; });
+
+const subtotal = equipP + svcP + extrasP;
+const discPct = parseFloat(document.getElementById('discountPct').value) || 0;
+const discAmt = subtotal * discPct / 100;
+const total = subtotal - discAmt;
+
+const totX = pageW - margin - 70;
+const totW = 70;
+const rowH = 8;
+const rowCount = discPct > 0 ? 2 : 1;
+const bgH = rowCount * rowH + pad * 2;
+
+// Background rectangle
+doc.setFillColor(244, 245, 247);
+doc.rect(totX, y, totW, bgH, 'F');
+
+// Subtotal row
+doc.setFontSize(8.5);
+doc.setFont('helvetica', 'normal');
+doc.setTextColor(97, 103, 115);
+doc.text('Subtotal:', totX + 4, row1Y);
+doc.text(`$${fmtNum(Math.round(subtotal))}`, totX + totW - 4, row1Y, { align: 'right' });
+
+// Discount row (if applicable)
+if (discPct > 0) {
+  doc.setTextColor(139, 46, 15);
+  doc.text(`Descuento (${discPct}%):`, totX + 4, row2Y);
+  doc.text(`$${fmtNum(Math.round(discAmt))}`, totX + totW - 4, row2Y, { align: 'right' });
+}
+
+// Total row (dark background)
+doc.setFillColor(31, 53, 82);
+doc.rect(totX, y + bgH + 2, totW, 11, 'F');
+doc.setFont('helvetica', 'bold');
+doc.setTextColor(255, 255, 255);
+doc.setFontSize(10);
+doc.text('TOTAL:', totX + 4, y + bgH + 9.5);
+doc.text(`$${fmtNum(Math.round(total))}`, totX + totW - 4, y + bgH + 9.5, { align: 'right' });
+```
+
+## Discount Functionality
+
+Users can apply percentage discounts in the summary:
+
+```html title="index.html"
+<div class="summary-card">
+  <div class="summary-title"><i class="fas fa-tag"></i> Descuento</div>
+  <div class="summary-row">
+    <div class="summary-row-label">
+      <input type="number" id="discountPct" 
+             class="discount-pct-input" 
+             placeholder="% descuento" 
+             min="0" max="100" 
+             oninput="recalcTotal()">
+    </div>
+    <div class="summary-row-val discount-badge" id="discountBadgeAmt">— $0</div>
+  </div>
+</div>
+```
+
+The discount is recalculated on input:
+
+```javascript {5-7} title="app.js"
+function recalcTotal() {
+  const equipPrice = parseFloat(document.getElementById('sumEquipPrice').value) || 0;
+  const servicePrice = parseFloat(document.getElementById('sumServicePrice').value) || 0;
+  let extrasTotal = 0;
+  ACCESSORIES.forEach(acc => {
+    extrasTotal += (accQty[acc.id]||0) * acc.price;
+  });
+  
+  const subtotal = equipPrice + servicePrice + extrasTotal;
+  const discPct = parseFloat(document.getElementById('discountPct').value) || 0;
+  const discAmt = subtotal * discPct / 100;
+  const total = subtotal - discAmt;
+  
+  document.getElementById('discountBadgeAmt').textContent = `−$${fmtNum(Math.round(discAmt))}`;
+  document.getElementById('grandTotal').textContent = fmtNum(Math.round(total));
+}
+```
+
+## Service-Specific Content
+
+Each service type includes detailed information in the PDF:
+
+```javascript {7-11,15-29} title="app.js"
+function appendServiceInfoToPdf(doc, startY, margin, pageW, selectedServiceItems) {
+  const keys = getServiceInfoKeys(selectedServiceItems);
+  if (!keys.length) return startY;
+  
+  let y = startY;
+  
+  keys.forEach((key, idx) => {
+    const block = SERVICE_PDF_CONTENT[key];
+    if (!block) return;
+    
+    y = ensurePdfSpace(doc, y, 38);
+    sectionHeader(doc, `  INFORMACION RELEVANTE · ${block.title.toUpperCase()}`, margin, y, pageW - margin*2);
+    y += 8;
+    
+    // Relevant information
+    doc.setFont('helvetica', 'bold');
+    doc.text('Información relevante:', margin, y);
+    y += 4;
+    
+    doc.setFont('helvetica', 'normal');
+    block.relevant.forEach(paragraph => {
+      const lines = doc.splitTextToSize(paragraph, pageW - margin*2);
+      y = ensurePdfSpace(doc, y, lines.length * 4 + 2);
+      doc.text(lines, margin, y);
+      y += lines.length * 4 + 1;
+    });
+    
+    // Extra information (bullet points)
+    y += 2;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Información extra:', margin, y);
+    y += 4;
+    
+    doc.setFont('helvetica', 'normal');
+    block.extra.forEach(item => {
+      const lines = doc.splitTextToSize(`- ${item}`, pageW - margin*2);
+      y = ensurePdfSpace(doc, y, lines.length * 4 + 1);
+      doc.text(lines, margin, y);
+      y += lines.length * 4 + 1;
+    });
+  });
+  
+  return y;
+}
+```
+
+<Tip>
+  The `ensurePdfSpace` function automatically adds a new page if content would overflow the current page.
+</Tip>
+
+### Automatic Pagination
+
+```javascript title="app.js"
+function ensurePdfSpace(doc, y, neededHeight, pageH = 297) {
+  if (y + neededHeight <= pageH - 22) return y;
+  doc.addPage();
+  return 20; // Start new page with top margin
+}
+```
+
+## PDF Footer
+
+Every page includes a branded footer:
+
+```javascript {3-8,12-14} title="app.js"
+const pageH = 297;
+
+doc.setFillColor(31, 53, 82);
+doc.rect(0, pageH - 18, pageW, 18, 'F');
+doc.setFillColor(79, 102, 132);
+doc.rect(0, pageH - 18, 4, 18, 'F'); // Left accent bar
+
+doc.setFontSize(7.5);
+doc.setFont('helvetica', 'normal');
+doc.setTextColor(226, 229, 235);
+doc.text('RefriPro · Generado con CotizaClima App', margin + 4, pageH - 9);
+
+doc.setTextColor(238, 240, 244);
+doc.text(quoteNumber, pageW - margin, pageH - 9, { align: 'right' });
+```
+
+## Auto-Save on PDF Generation
+
+Quotations are automatically saved when generating PDF:
+
+```javascript {5-9} title="quote-persistence.js"
+function patchGeneratePdfForAutosave() {
+  const original = window.generatePDF;
+  
+  window.generatePDF = async function patchedGeneratePDF() {
+    let saved = null;
+    try {
+      saved = await persistCurrentQuote('issued', { requireAuth: false, silent: true });
+    } catch (e) {
+      saved = null;
+    }
+    
+    await original();
+    
+    if (saved) {
+      showToast('PDF generado y cotización guardada', 'success');
+    }
+  };
+}
+```
+
+<Info>
+  The auto-save is silent and doesn't interrupt the PDF download even if Firebase is unavailable.
+</Info>
+
+## Customization Options
+
+Users can customize pricing before generating the PDF:
+
+```html title="index.html"
+<div class="summary-card">
+  <div class="summary-title"><i class="fas fa-snowflake"></i> Equipo</div>
+  <div class="summary-row">
+    <div class="summary-row-label">Precio equipo (c/IVA)</div>
+    <input type="number" class="summary-row-val edit-field" 
+           id="sumEquipPrice" oninput="recalcTotal()">
+  </div>
+</div>
+
+<div class="summary-card">
+  <div class="summary-title"><i class="fas fa-wrench"></i> Servicio</div>
+  <div class="summary-row">
+    <div class="summary-row-label">Precio servicio</div>
+    <input type="number" class="summary-row-val edit-field" 
+           id="sumServicePrice" oninput="recalcTotal()">
+  </div>
+</div>
+```
+
+<Warning>
+  Price adjustments in the summary do NOT change the saved prices in Firebase - they only affect the current quotation.
+</Warning>
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Quotation Wizard" icon="wand-magic-sparkles" href="/features/quotation-wizard">
+    Complete the quotation workflow
+  </Card>
+  <Card title="Service Types" icon="wrench" href="/features/service-types">
+    Learn about service-specific PDF content
+  </Card>
+</CardGroup>

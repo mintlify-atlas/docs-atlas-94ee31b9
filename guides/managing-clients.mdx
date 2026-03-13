@@ -1,0 +1,622 @@
+---
+title: Managing Clients
+description: Learn how to manage your client directory, search clients, view quote history, and use GPS features in CotizaClima
+---
+
+CotizaClima automatically builds a client directory as you create and save quotes. The client directory page (`clients.html`) provides a centralized view of all your clients and their associated quotes.
+
+## Accessing the Client Directory
+
+The client directory is available only when authenticated.
+
+<Steps>
+  <Step title="Sign In">
+    Log in to CotizaClima using your Firebase Authentication credentials.
+  </Step>
+  
+  <Step title="Open Menu">
+    Click the hamburger menu icon in the top-right corner of the app header.
+  </Step>
+  
+  <Step title="Navigate to Clients">
+    Click "Ver clientes" in the menu to open the client directory.
+  </Step>
+</Steps>
+
+```html
+<!-- Hamburger menu with clients option -->
+<div class="hamburger-menu" id="hamburgerMenu">
+  <button id="menuLoginAction" class="hamburger-item" type="button">
+    Iniciar sesión
+  </button>
+  <button id="menuOpenHistory" class="hamburger-item" 
+          type="button" disabled>
+    Ver historial
+  </button>
+  <button id="menuOpenClients" class="hamburger-item" 
+          type="button" disabled>
+    Ver clientes
+  </button>
+  <div id="menuSessionText" class="hamburger-session">
+    Sin sesión
+  </div>
+</div>
+```
+
+<Warning>
+  The "Ver clientes" option is disabled when not authenticated. You must sign in to access the client directory.
+</Warning>
+
+## How Clients Are Created
+
+Clients are automatically created when you save a quote that includes a **RUT** (Chilean tax ID).
+
+### Client Deduplication
+
+CotizaClima uses the RUT as a unique identifier to prevent duplicate clients:
+
+```javascript
+// Normalizes a Chilean RUT: removes dots and spaces
+// "12.345.678-9" → "12345678-9"
+function normalizeRut(rut) {
+  if (!rut || typeof rut !== 'string') return '';
+  return rut.replace(/\./g, '')
+             .replace(/\s/g, '')
+             .toLowerCase()
+             .trim();
+}
+
+// Returns a stable clientId based on RUT
+function resolveClientId(client) {
+  if (!client) return null;
+  const rut = normalizeRut(client.rut || '');
+  // Require at least one digit + hyphen + digit
+  if (!rut || !/\d/.test(rut) || rut.length < 3) return null;
+  return rut;
+}
+```
+
+<Info>
+  If you create multiple quotes for the same client (same RUT), CotizaClima automatically associates all quotes with that single client record.
+</Info>
+
+### Client Sync on Quote Save
+
+When you save a quote, the client is synced in the background:
+
+```javascript
+// Called fire-and-forget from persistCurrentQuote
+async function syncClientForQuote(uid, idToken, clientObject, quoteId) {
+  if (!clientObject || !clientObject.name) return null;
+  const clientId = resolveClientId(clientObject);
+  if (!clientId) return null; // No RUT → skip
+  
+  try {
+    const now = Date.now();
+    
+    // Fetch existing to preserve createdAt and quoteIds
+    let existing = null;
+    try {
+      existing = await request(
+        'clients/' + uid + '/' + clientId, 
+        idToken, 
+        { method: 'GET' }
+      );
+    } catch (e) {
+      existing = null;
+    }
+    
+    const quoteIds = Object.assign({}, 
+      existing ? (existing.quoteIds || {}) : {}
+    );
+    if (quoteId) quoteIds[quoteId] = true;
+    
+    const payload = {
+      name: clientObject.name || '',
+      rut: clientObject.rut || '',
+      rutKey: clientId,
+      phone: clientObject.phone || '',
+      email: clientObject.email || '',
+      address: clientObject.address || '',
+      city: clientObject.city || '',
+      region: clientObject.region || '',
+      property: clientObject.property || '',
+      notes: clientObject.notes || '',
+      createdAt: (existing && existing.createdAt) 
+        ? existing.createdAt 
+        : now,
+      updatedAt: now,
+      quoteIds: quoteIds
+    };
+    
+    await request('clients/' + uid + '/' + clientId, idToken, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    return clientId;
+  } catch (e) {
+    // Silently fail — background operation
+    return null;
+  }
+}
+```
+
+<Note>
+  Client sync happens in the background and won't interrupt your workflow if it fails. However, only quotes with a RUT will create/update client records.
+</Note>
+
+## Client Directory Page
+
+The client directory displays all saved clients with their associated quotes.
+
+### Page Structure
+
+```html
+<main class="quotes-shell">
+  <div class="quotes-topbar">
+    <div>
+      <h1 class="quotes-title">Clientes</h1>
+      <p class="quotes-sub">
+        Consulta clientes guardados y sus cotizaciones asociadas.
+      </p>
+    </div>
+    <div class="quotes-actions">
+      <button id="btnBackApp" class="quotes-btn secondary">
+        Volver a la app
+      </button>
+      <button id="btnBackHistory" class="quotes-btn secondary">
+        Historial
+      </button>
+      <button id="btnLogout" class="quotes-btn danger">
+        Cerrar sesión
+      </button>
+    </div>
+  </div>
+  
+  <!-- Search bar -->
+  <div class="clients-search-bar">
+    <input id="clientsSearchInput" 
+           class="quotes-input clients-search-input" 
+           type="search"
+           placeholder="Buscar por nombre o RUT...">
+  </div>
+  
+  <!-- Client list -->
+  <section id="clientsListCard" class="list-card">
+    <div id="clientList" class="client-list"></div>
+  </section>
+</main>
+```
+
+## Searching and Filtering Clients
+
+Use the search bar to quickly find clients by name or RUT.
+
+### Real-Time Search
+
+The search filters clients in real-time as you type:
+
+```javascript
+function renderFiltered(query) {
+  var q = (query || '').trim().toLowerCase();
+  var filtered = q
+    ? allClients.filter(function(c) {
+        return (c.name || '').toLowerCase().indexOf(q) !== -1 ||
+               (c.rut || '').toLowerCase().indexOf(q) !== -1 ||
+               (c.rutKey || '').toLowerCase().indexOf(q) !== -1;
+      })
+    : allClients;
+  
+  var container = document.getElementById('clientList');
+  if (!container) return;
+  
+  if (!filtered.length) {
+    container.innerHTML = 
+      '<div class="quote-item" style="text-align:center;padding:16px;">' +
+      (q ? 'Sin resultados para &ldquo;' + q + '&rdquo;.' 
+         : 'No hay clientes guardados aún.') +
+      '</div>';
+    return;
+  }
+  
+  container.innerHTML = filtered
+    .map(function(c) { 
+      return renderClientCard(c, quotesByClientId[c.id] || []); 
+    })
+    .join('');
+}
+
+// Bind search input
+document.getElementById('clientsSearchInput')
+  .addEventListener('input', function() {
+    renderFiltered(this.value);
+  });
+```
+
+<Tip>
+  The search matches both formatted RUTs (e.g., "12.345.678-9") and normalized RUTs (e.g., "12345678-9"), so you can search either way.
+</Tip>
+
+### Search Examples
+
+<CodeGroup>
+```text Example: Search by name
+Juan Pérez
+```
+
+```text Example: Search by partial RUT
+12345678
+```
+
+```text Example: Search by formatted RUT
+12.345.678-9
+```
+</CodeGroup>
+
+## Client Card Details
+
+Each client is displayed as an expandable card showing key information and actions.
+
+### Client Card Structure
+
+```javascript
+function renderClientCard(client, clientQuotes) {
+  var count = clientQuotes.length;
+  var phoneHtml = client.phone 
+    ? '<span class="client-detail-item">' + client.phone + '</span>' 
+    : '';
+  var emailHtml = client.email 
+    ? '<span class="client-detail-item">' + client.email + '</span>' 
+    : '';
+  var locationHtml = client.city
+    ? '<span class="client-detail-item">' + 
+      client.city + 
+      (client.region ? ', ' + client.region : '') + 
+      '</span>'
+    : '';
+  
+  var countLabel = count === 1 
+    ? '1 cotización' 
+    : (count + ' cotizaciones');
+  
+  return '<div class="client-card" data-client-id="' + client.id + '">' +
+    '<div class="client-card-header">' +
+      '<div class="client-card-info">' +
+        '<div class="client-card-name">' + 
+          (client.name || 'Sin nombre') + 
+        '</div>' +
+        '<div class="client-card-rut">' + 
+          (client.rut || 'Sin RUT') + 
+        '</div>' +
+        '<div class="client-card-details">' + 
+          phoneHtml + emailHtml + locationHtml + 
+        '</div>' +
+        '<div class="client-card-actions">' + 
+          callBtnCard + wazeBtnCard + 
+        '</div>' +
+      '</div>' +
+      '<button class="client-toggle-btn" ' +
+              'data-client-id="' + client.id + '">' +
+        '<span class="client-quote-count">' + countLabel + '</span>' +
+        '<span class="client-toggle-icon">&#9660;</span>' +
+      '</button>' +
+    '</div>' +
+    '<div class="client-quotes-list hidden" ' +
+         'data-quotes-for="' + client.id + '">' +
+      '<div class="quote-list">' + quotesHtml + '</div>' +
+    '</div>' +
+  '</div>';
+}
+```
+
+### Client Information Displayed
+
+<CardGroup cols={2}>
+  <Card title="Basic Info" icon="user">
+    - Client name
+    - RUT (tax ID)
+    - Number of quotes
+  </Card>
+  
+  <Card title="Contact Details" icon="phone">
+    - Phone number
+    - Email address
+    - City and region
+  </Card>
+</CardGroup>
+
+## Viewing Client Quote History
+
+Click the toggle button on a client card to expand and view all quotes for that client.
+
+### Expandable Quote List
+
+```javascript
+// Toggle client accordion
+var toggleBtn = evt.target.closest('button[data-client-id]');
+if (toggleBtn) {
+  var clientId = toggleBtn.dataset.clientId;
+  var panel = document.querySelector(
+    '[data-quotes-for="' + clientId + '"]'
+  );
+  if (panel) {
+    var isOpen = !panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', isOpen);
+    var icon = toggleBtn.querySelector('.client-toggle-icon');
+    if (icon) icon.innerHTML = isOpen ? '&#9660;' : '&#9650;';
+    toggleBtn.setAttribute('aria-expanded', String(!isOpen));
+  }
+}
+```
+
+### Quote Details in Client View
+
+Each quote displays:
+
+```javascript
+function renderQuoteRow(q) {
+  var total = (q.pricing && q.pricing.total) 
+    ? ('$' + fmtNum(q.pricing.total)) 
+    : '$0';
+  var date = q.updatedAt 
+    ? new Date(q.updatedAt).toLocaleDateString('es-CL') 
+    : '-';
+  var client = q.client || {};
+  var phone = client.phone ? client.phone.trim() : '';
+  var wazeUrl = buildWazeUrl(client);
+  
+  return '<div class="quote-item">' +
+    '<div class="quote-head">' +
+      '<div>' +
+        '<div class="quote-num">' + 
+          (q.quoteNumber || q.id) + 
+        '</div>' +
+        '<div class="quote-meta">' + 
+          date + ' &middot; ' + statusLabel(q.status) + 
+        '</div>' +
+      '</div>' +
+      '<div class="quote-total">' + total + '</div>' +
+    '</div>' +
+    '<div class="quote-actions">' +
+      '<button class="quotes-btn" ' +
+              'data-action="open" ' +
+              'data-id="' + q.id + '">' +
+        'Abrir y editar' +
+      '</button>' +
+      callBtn + wazeBtn +
+    '</div>' +
+  '</div>';
+}
+```
+
+<Info>
+  Quotes are sorted by update date (most recent first) within each client card.
+</Info>
+
+## GPS Location Features
+
+CotizaClima integrates GPS features for quick access to client locations.
+
+### Waze Navigation
+
+Each client card and quote includes a Waze button for one-tap navigation:
+
+```javascript
+function buildWazeUrl(obj) {
+  var parts = [obj.address, obj.city, obj.region].filter(Boolean);
+  if (!parts.length) return '';
+  return 'https://waze.com/ul?q=' + 
+         encodeURIComponent(parts.join(', ')) + 
+         '&navigate=yes';
+}
+
+var wazeUrl = buildWazeUrl(client);
+var wazeBtn = wazeUrl
+  ? '<a class="quotes-btn secondary icon-btn" ' +
+       'href="' + wazeUrl + '" ' +
+       'target="_blank" ' +
+       'rel="noopener noreferrer" ' +
+       'title="Navegar con Waze">' +
+      '<i class="fas fa-route"></i>' +
+    '</a>'
+  : '';
+```
+
+<Tip>
+  The Waze button automatically combines the client's address, city, and region to create a complete navigation query.
+</Tip>
+
+### Quick Call Feature
+
+Click the phone icon to instantly call the client:
+
+```javascript
+var phone = client.phone ? client.phone.trim() : '';
+var callBtn = phone
+  ? '<a class="quotes-btn secondary icon-btn" ' +
+       'href="tel:' + phone.replace(/\s/g, '') + '" ' +
+       'title="Llamar a ' + (client.name || 'cliente') + '">' +
+      '<i class="fas fa-phone"></i>' +
+    '</a>'
+  : '';
+```
+
+<CardGroup cols={2}>
+  <Card title="Waze Navigation" icon="route">
+    Opens Waze app with the client's address pre-filled and ready for turn-by-turn navigation.
+  </Card>
+  
+  <Card title="Quick Call" icon="phone">
+    Initiates a phone call using your device's default phone app.
+  </Card>
+</CardGroup>
+
+## Opening and Editing Quotes
+
+From the client directory, you can open any quote for editing.
+
+### Opening a Quote
+
+```javascript
+function navigateToEditorWithQuote(quote) {
+  sessionStorage.setItem(PENDING_QUOTE_STORAGE_KEY, 
+    JSON.stringify({ quote: quote })
+  );
+  window.location.href = 'index.html';
+}
+
+// Click handler
+var openBtn = evt.target.closest('button[data-action="open"]');
+if (openBtn) {
+  var id = openBtn.dataset.id;
+  var quote = quoteById[id];
+  if (quote) {
+    navigateToEditorWithQuote(quote);
+  } else {
+    showStatus('No se encontró la cotización.', true);
+  }
+}
+```
+
+### Quote Loading in Editor
+
+When you return to the main app, the pending quote is automatically loaded:
+
+```javascript
+function applyPendingQuoteIfAny() {
+  const bridge = getBridge();
+  if (!bridge) return;
+  
+  const payload = readPendingQuote();
+  if (!payload || !payload.quote) return;
+  
+  const originalToast = window.showToast;
+  window.showToast = function() {};
+  try {
+    bridge.importQuoteSnapshot(payload.quote);
+  } finally {
+    window.showToast = originalToast;
+    clearPendingQuote();
+  }
+  
+  showToast('Cotización cargada para edición', 'success');
+}
+```
+
+<Note>
+  Opening a quote from the client directory loads all its data into the quote editor, allowing you to make changes and re-generate the PDF or save an updated version.
+</Note>
+
+## Best Practices for Client Data
+
+<Steps>
+  <Step title="Always Include RUT">
+    Enter the client's RUT to enable automatic client deduplication and association with future quotes.
+  </Step>
+  
+  <Step title="Complete Contact Information">
+    Fill in phone and email to enable quick communication from the client directory.
+  </Step>
+  
+  <Step title="Accurate Addresses">
+    Use GPS autocomplete or verify addresses manually to ensure Waze navigation works correctly.
+  </Step>
+  
+  <Step title="Add Descriptive Notes">
+    Use the notes field to record access instructions, gate codes, or special requirements.
+  </Step>
+</Steps>
+
+### Data Quality Tips
+
+<Accordion title="RUT Formatting">
+  CotizaClima accepts RUTs in any format:
+  - With dots: `12.345.678-9`
+  - Without dots: `12345678-9`
+  - With spaces: `12 345 678-9`
+  
+  All formats are normalized to the same internal format for deduplication.
+</Accordion>
+
+<Accordion title="Phone Number Best Practices">
+  Include the country code for international clients:
+  - Chilean mobile: `+56 9 1234 5678`
+  - Chilean landline: `+56 2 1234 5678`
+  
+  This ensures the quick call feature works correctly.
+</Accordion>
+
+<Accordion title="Address Accuracy">
+  For best results with GPS features:
+  - Include street number
+  - Specify commune (comuna)
+  - Add apartment or office number if applicable
+  - Use standard abbreviations (Av., Pje., etc.)
+</Accordion>
+
+## Client Data Structure
+
+Clients are stored in Firebase Realtime Database with the following structure:
+
+```javascript
+{
+  "clients": {
+    "[userId]": {
+      "[rutKey]": {
+        "name": "Juan Pérez",
+        "rut": "12.345.678-9",
+        "rutKey": "12345678-9",
+        "phone": "+56 9 1234 5678",
+        "email": "juan@ejemplo.cl",
+        "address": "Av. Principal 123",
+        "city": "Curicó",
+        "region": "Maule",
+        "property": "Casa",
+        "notes": "Portón negro al lado izquierdo",
+        "createdAt": 1234567890000,
+        "updatedAt": 1234567890000,
+        "quoteIds": {
+          "quote-id-1": true,
+          "quote-id-2": true
+        }
+      }
+    }
+  }
+}
+```
+
+<Info>
+  The `quoteIds` field is a set (object with boolean values) that links the client to all their quotes.
+</Info>
+
+## Troubleshooting
+
+<Accordion title="Client not appearing in directory">
+  **Possible causes:**
+  - Quote was saved without a RUT
+  - RUT was invalid or too short (minimum 3 characters)
+  - Not authenticated when saving the quote
+  
+  **Solution:** Edit the quote, add a valid RUT, and save again while authenticated.
+</Accordion>
+
+<Accordion title="Duplicate clients appearing">
+  **Possible cause:** RUT was entered differently (e.g., with/without dots)
+  
+  **Solution:** CotizaClima normalizes RUTs automatically. If you see duplicates, they likely have different RUT values. Check and standardize the RUT format.
+</Accordion>
+
+<Accordion title="Waze button not working">
+  **Possible causes:**
+  - Waze app not installed
+  - Missing address, city, or region data
+  - Pop-up blocked by browser
+  
+  **Solution:** Ensure address data is complete and allow pop-ups for the CotizaClima site.
+</Accordion>
+
+<Warning>
+  Client data is stored per user account. If you sign out and sign in with a different account, you'll see a different set of clients.
+</Warning>

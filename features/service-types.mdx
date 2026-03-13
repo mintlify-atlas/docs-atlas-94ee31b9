@@ -1,0 +1,354 @@
+---
+title: Service Types
+description: Configure installation, maintenance, repair, and other services with flexible pricing
+icon: wrench
+---
+
+CotizaClima supports 6 different service types, each with customizable pricing and quantities. Services can be combined (e.g., equipment + installation + maintenance) to create comprehensive quotations.
+
+## Available Service Types
+
+The application defines 6 service types in the `SERVICES` array:
+
+```javascript title="app.js"
+const SERVICES = [
+  { 
+    id: 'instalacion', 
+    name: 'Instalación nueva', 
+    desc: 'Primera instalación del equipo', 
+    price: 100000, 
+    icon: 'fa-hammer' 
+  },
+  { 
+    id: 'mantencion', 
+    name: 'Mantención', 
+    desc: 'Limpieza y revisión general', 
+    price: 30000, 
+    icon: 'fa-screwdriver-wrench' 
+  },
+  { 
+    id: 'cambio', 
+    name: 'Cambio + instalación', 
+    desc: 'Retiro equipo antiguo + nuevo', 
+    price: 120000, 
+    icon: 'fa-arrow-right-arrow-left' 
+  },
+  { 
+    id: 'reparacion', 
+    name: 'Reparación', 
+    desc: 'Diagnóstico y reparación de fallas', 
+    price: 10000, 
+    icon: 'fa-gear' 
+  },
+  { 
+    id: 'garantia', 
+    name: 'Visita garantía', 
+    desc: 'Revisión por garantía vigente', 
+    price: 0, 
+    icon: 'fa-shield' 
+  },
+  { 
+    id: 'presupuesto', 
+    name: 'Solo presupuesto', 
+    desc: 'Cotización sin instalación', 
+    price: 0, 
+    icon: 'fa-clipboard-list' 
+  },
+];
+```
+
+<Note>
+  The `price` field represents the default base price. Users can adjust this in the service card or final summary.
+</Note>
+
+## Service Categories
+
+Services fall into two categories based on how quantities work:
+
+### Multi-Service (Quantity-Based)
+
+**Installation** and **Maintenance** support multiple quantities:
+
+```javascript title="app.js"
+function isMultiService(id) {
+  return id === 'instalacion' || id === 'mantencion';
+}
+```
+
+- Users can add multiple installations (one per equipment)
+- Users can add multiple maintenance services
+- Each has a configurable unit price
+
+### Single-Service (One-Time)
+
+**Repair**, **Warranty**, **Replacement**, and **Quote-Only** are mutually exclusive:
+
+- Only one can be selected at a time
+- Selecting a different single-service deselects the previous one
+
+<Info>
+  Multi-services can be combined with single-services. For example: 2 installations + 1 maintenance + 1 repair.
+</Info>
+
+## Service Selection Logic
+
+```javascript {2-10,14-16} title="app.js"
+function selectService(id) {
+  // Multi-service: increment quantity
+  if (isMultiService(id)) {
+    if (id === 'instalacion') {
+      const equipCount = getEquipCount();
+      if (equipCount > 0 && (serviceQtyMap[id] || 0) >= equipCount) return;
+    }
+    serviceQtyMap[id] = Math.max(0, (serviceQtyMap[id] || 0) + 1);
+    updateMultiServiceInputs();
+    renderServiceGrid();
+    updateStep2NextButton();
+    return;
+  }
+  
+  // Single-service: toggle selection
+  selectedService = selectedService === id ? null : id;
+  renderServiceGrid();
+  updateStep2NextButton();
+}
+```
+
+## Installation Quantity Cap
+
+Installation quantity is automatically capped at the number of equipment units selected:
+
+```javascript {5-6} title="app.js"
+function selectService(id) {
+  if (isMultiService(id)) {
+    if (id === 'instalacion') {
+      const equipCount = getEquipCount();
+      // Prevent adding more installations than equipment
+      if (equipCount > 0 && (serviceQtyMap[id] || 0) >= equipCount) return;
+    }
+    // ...
+  }
+}
+```
+
+<Warning>
+  If the user removes equipment after adding installations, the installation count is automatically reduced to match.
+</Warning>
+
+## Auto-Preloading Installations
+
+When moving from Step 1 (Equipment) to Step 2 (Service), installations are automatically suggested:
+
+```javascript {6-11} title="app.js"
+function preloadInstallationsFromEquipment() {
+  const equipCount = getEquipCount();
+  
+  if (equipCount === 0) {
+    serviceQtyMap.instalacion = 0;
+  } else if ((serviceQtyMap.instalacion || 0) === 0) {
+    // Pre-load default: 1 installation per equipment added
+    serviceQtyMap.instalacion = equipCount;
+  } else {
+    // Clamp if user removed equipment after setting installations
+    serviceQtyMap.instalacion = Math.min(serviceQtyMap.instalacion, equipCount);
+  }
+  
+  updateMultiServiceInputs();
+  updateStep2NextButton();
+  renderServiceGrid();
+}
+```
+
+<Tip>
+  This smart pre-filling saves users time - most quotations include installation, so the system assumes it by default.
+</Tip>
+
+## Inline Quantity Controls
+
+Multi-services display inline quantity controls:
+
+```javascript {7-14} title="app.js"
+function renderServiceGrid() {
+  const equipCount = getEquipCount();
+  
+  document.getElementById('serviceGrid').innerHTML = SERVICES.map(s => {
+    const qty = Math.max(0, serviceQtyMap[s.id] || 0);
+    const isActive = isMultiService(s.id) ? qty > 0 : selectedService === s.id;
+    
+    let inlineControls = '';
+    if (isMultiService(s.id) && isActive) {
+      inlineControls = `
+        <div class="svc-inline-controls">
+          <div class="svc-counter">
+            <button class="svc-counter-btn" onclick="decrementService('${s.id}')">−</button>
+            <span class="svc-counter-val">${qty}</span>
+            <button class="svc-counter-btn" onclick="selectService('${s.id}')">+</button>
+          </div>
+        </div>`;
+    }
+    
+    return `
+    <div class="service-card ${isActive ? 'selected' : ''}">
+      <div class="svc-card-top" onclick="selectService('${s.id}')">
+        <div class="service-icon"><i class="fas ${s.icon}"></i></div>
+        <div class="service-name">${s.name}</div>
+        <div class="service-price">$${fmtNum(displayPrice)}</div>
+      </div>
+      ${inlineControls}
+    </div>`;
+  }).join('');
+}
+```
+
+## Custom Unit Pricing
+
+Users can adjust the unit price for installation and maintenance services:
+
+```javascript {4-11} title="app.js"
+let instalacionUnitValue = 100000;
+let mantencionUnitValue = 30000;
+
+function updateInstalacionValueInline(val) {
+  instalacionUnitValue = Math.max(0, parseFloat(val) || 0);
+  const qty = serviceQtyMap.instalacion || 0;
+  const priceEl = document.getElementById('svc-price-instalacion');
+  if (priceEl) priceEl.textContent = qty > 0 ? `$${fmtNum(qty * instalacionUnitValue)}` : '';
+  updateServiceQtyPreview();
+  buildSummary();
+}
+```
+
+The inline input appears when the service is active:
+
+```javascript {8-12} title="app.js"
+if (isMultiService(s.id) && isActive) {
+  const unitHtml = s.id === 'instalacion' ? `
+    <div class="svc-unit-row">
+      <div class="svc-unit-label">Valor por instalación</div>
+      <input type="number" class="svc-unit-input" value="${instalacionUnitValue}"
+        min="0" step="1000" oninput="updateInstalacionValueInline(this.value)">
+    </div>` : '';
+  
+  inlineControls = `
+    <div class="svc-inline-controls">
+      ${counterHtml}
+      ${unitHtml}
+    </div>`;
+}
+```
+
+## Repair Service
+
+The repair service supports custom quantity and unit value:
+
+```javascript {2-3,8-9} title="app.js"
+let repairQty = 1;
+let repairUnitValue = 10000;
+
+function updateRepairServiceValue() {
+  const qtyEl = document.getElementById('repairQty');
+  const unitEl = document.getElementById('repairUnitValue');
+  
+  repairQty = Math.max(1, parseInt((qtyEl && qtyEl.value) || '1', 10) || 1);
+  repairUnitValue = Math.max(0, parseFloat((unitEl && unitEl.value) || '0') || 0);
+  
+  const priceEl = document.getElementById('svc-price-reparacion');
+  if (priceEl) priceEl.textContent = `$${fmtNum(repairQty * repairUnitValue)}`;
+  
+  buildSummary();
+  recalcTotal();
+}
+```
+
+## Service PDF Content
+
+Each service type has detailed content for PDF generation:
+
+```javascript title="app.js"
+const SERVICE_PDF_CONTENT = {
+  instalacion: {
+    title: 'Instalación de Aire Acondicionado',
+    relevant: [
+      'Agradecemos la confianza depositada en RefriPro.',
+      'La presente cotización considera la instalación de equipo de aire acondicionado tipo Split...',
+      'El servicio incluye instalación de unidad interior y exterior, conexión de cañerías...'
+    ],
+    extra: [
+      'La instalación considera condiciones estándar, incluyendo hasta 3 metros de interconexión...',
+      'Trabajos adicionales como mayor distancia de cañería, canaletas o soportes especiales...',
+      'El cliente debe contar con punto eléctrico operativo y acceso adecuado...',
+      'La instalación cuenta con 1 año de garantía por el trabajo realizado por RefriPro.'
+    ]
+  },
+  mantencion: {
+    title: 'Mantención Preventiva',
+    relevant: [
+      'Agradecemos la confianza depositada en RefriPro.',
+      'La presente cotización considera la mantención preventiva de equipos...',
+      'El servicio incluye limpieza de filtros, limpieza de evaporador y condensador...'
+    ],
+    extra: [
+      'El servicio corresponde a mantención preventiva, incluyendo limpieza y revisión general.',
+      'La mantención no incluye reparaciones ni repuestos en caso de detectarse fallas.',
+      'Si durante la revisión se detecta alguna anomalía, se informará y cotizará previamente.',
+      'La garantía del servicio es de 30 días, aplicable únicamente al trabajo realizado.'
+    ]
+  },
+  reparacion: {
+    title: 'Reparación / Diagnóstico',
+    relevant: [
+      'La presente cotización considera la revisión y diagnóstico técnico del equipo...',
+      'Durante la intervención se realizará una evaluación general del sistema...'
+    ],
+    extra: [
+      'El servicio considera diagnóstico técnico y revisión general del equipo.',
+      'El diagnóstico no incluye repuestos ni reparaciones...',
+      'Las reparaciones realizadas cuentan con garantía limitada al trabajo efectuado.'
+    ]
+  }
+};
+```
+
+<Note>
+  The `cambio` service uses the `instalacion` PDF content since it includes installation.
+</Note>
+
+## Service Notes
+
+Users can add service-specific notes that appear in the final quotation:
+
+```html {3} title="index.html"
+<div class="form-group">
+  <label class="form-label">Observaciones del servicio</label>
+  <textarea class="form-textarea" id="serviceNotes" 
+            placeholder="Describe condiciones especiales, metros de cañería, acceso al lugar, etc.">
+  </textarea>
+  <div class="notes-hint">Estos datos aparecerán en la cotización.</div>
+</div>
+```
+
+These notes are included in both the summary and PDF:
+
+```javascript {3-8} title="app.js"
+function buildSummary() {
+  // ...
+  const notes = document.getElementById('serviceNotes').value;
+  if (notes) {
+    document.getElementById('sumNotesRow').style.display = 'flex';
+    document.getElementById('sumNotes').textContent = notes;
+  } else {
+    document.getElementById('sumNotesRow').style.display = 'none';
+  }
+}
+```
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Quotation Wizard" icon="wand-magic-sparkles" href="/features/quotation-wizard">
+    Navigate through the quotation workflow
+  </Card>
+  <Card title="PDF Generation" icon="file-pdf" href="/features/pdf-generation">
+    See how services appear in the final PDF
+  </Card>
+</CardGroup>

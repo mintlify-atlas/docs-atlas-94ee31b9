@@ -1,0 +1,661 @@
+---
+title: Authentication
+description: Learn how Firebase Authentication works in CotizaClima, including sign in, session management, and demo mode
+---
+
+CotizaClima uses Firebase Authentication to enable user-specific features like quote history and client management. The app is designed to work in **demo mode** without authentication, but signing in unlocks persistent data storage.
+
+## How Authentication Works
+
+CotizaClima implements a lightweight Firebase Authentication client that communicates directly with Firebase REST APIs.
+
+### Authentication Architecture
+
+```javascript
+// firebase-auth.js configuration
+const FIREBASE_AUTH_CONFIG = {
+  apiKey: 'AIzaSyAIvIig9S0bQPYDf_eilrPB7lWbiWPy9EU'
+};
+
+const AUTH_STORAGE_KEY = 'cotiz_auth_session_v1';
+```
+
+<CardGroup cols={2}>
+  <Card title="Session Storage" icon="database">
+    Authentication state is stored in browser sessionStorage, not localStorage.
+    
+    **Persists**: Until browser tab closes
+  </Card>
+  
+  <Card title="Token Refresh" icon="rotate">
+    ID tokens are automatically refreshed when they expire (every hour).
+    
+    **Transparent**: No user action required
+  </Card>
+</CardGroup>
+
+## Demo Mode vs. Authenticated Mode
+
+CotizaClima supports two operating modes:
+
+### Demo Mode (No Authentication)
+
+<Info>
+  Demo mode allows you to explore the full quote creation workflow without signing in.
+</Info>
+
+**What works in demo mode:**
+- Browse equipment catalog
+- Create quotes through all 5 steps
+- Generate and download PDFs
+- Full quote creation workflow
+
+**What requires authentication:**
+- Saving quotes (draft or issued)
+- Viewing quote history
+- Accessing client directory
+- Tracking "Most Quoted" equipment
+
+```javascript
+function isAuthenticated() {
+  if (!window.FirebaseAuthService) return false;
+  return !!window.FirebaseAuthService.getCurrentUser();
+}
+```
+
+### Authenticated Mode
+
+When signed in, all features are enabled:
+
+```javascript
+function updateAuthMenuState() {
+  const loginAction = document.getElementById('menuLoginAction');
+  const historyAction = document.getElementById('menuOpenHistory');
+  const clientsAction = document.getElementById('menuOpenClients');
+  const sessionText = document.getElementById('menuSessionText');
+  const auth = window.FirebaseAuthService;
+  const user = auth ? auth.getCurrentUser() : null;
+  const logged = !!user;
+  
+  if (historyAction) historyAction.disabled = !logged;
+  if (clientsAction) clientsAction.disabled = !logged;
+  if (loginAction) {
+    loginAction.textContent = logged 
+      ? 'Cerrar sesión' 
+      : 'Iniciar sesión';
+  }
+  if (sessionText) {
+    sessionText.textContent = logged 
+      ? `Sesión: ${user.email || user.uid}` 
+      : 'Sin sesión';
+  }
+}
+```
+
+## Signing In
+
+There are two ways to sign in to CotizaClima.
+
+### From Main App (Modal)
+
+Click the hamburger menu and select "Iniciar sesión":
+
+```javascript
+function openLoginModal() {
+  const modal = document.getElementById('loginModal');
+  const status = document.getElementById('loginModalStatus');
+  if (status) {
+    status.textContent = '';
+    status.style.color = 'var(--text-muted)';
+  }
+  if (modal) modal.classList.add('open');
+}
+```
+
+```html
+<!-- Login modal in index.html -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Iniciar sesión</div>
+    <p class="notes-hint" style="margin-bottom:14px;">
+      El uso de la app es libre. Inicia sesión solo si quieres 
+      acceder al historial de cotizaciones.
+    </p>
+    
+    <div class="form-group">
+      <label class="form-label">Correo</label>
+      <input type="email" class="form-input" 
+             id="loginEmailInput" 
+             placeholder="usuario@empresa.cl">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Contraseña</label>
+      <input type="password" class="form-input" 
+             id="loginPasswordInput" 
+             placeholder="Tu contraseña">
+    </div>
+    
+    <div id="loginModalStatus" class="notes-hint" 
+         style="margin-top:6px; min-height:16px;">
+    </div>
+    
+    <div class="btn-row" style="margin-top:12px;">
+      <button class="btn btn-secondary" type="button" 
+              id="btnCloseLoginModal">
+        Cancelar
+      </button>
+      <button class="btn btn-primary" type="button" 
+              id="btnSubmitLoginModal">
+        Ingresar
+      </button>
+    </div>
+  </div>
+</div>
+```
+
+### From Quote History Page
+
+The quote history page (`quotes.html`) shows a login form if not authenticated:
+
+```html
+<section id="authCard" class="auth-card">
+  <h2>Iniciar sesión</h2>
+  <p class="quotes-sub">
+    Usa usuario y contraseña de Firebase Authentication.
+  </p>
+  <form id="loginForm" class="form-stack">
+    <input id="loginEmail" class="quotes-input" 
+           type="email" 
+           placeholder="usuario@empresa.cl" 
+           required>
+    <input id="loginPassword" class="quotes-input" 
+           type="password" 
+           placeholder="Contraseña" 
+           required>
+    <button class="quotes-btn" type="submit">Entrar</button>
+  </form>
+</section>
+```
+
+## Sign In Process
+
+The sign in process uses Firebase Authentication REST API.
+
+### Step-by-Step Authentication
+
+<Steps>
+  <Step title="User Submits Credentials">
+    Email and password are collected from the login form.
+  </Step>
+  
+  <Step title="Request to Firebase">
+    Credentials are sent to Firebase Authentication API endpoint.
+  </Step>
+  
+  <Step title="Receive Tokens">
+    Firebase returns an ID token and refresh token.
+  </Step>
+  
+  <Step title="Store Session">
+    Session data is saved to sessionStorage with expiration time.
+  </Step>
+  
+  <Step title="Update UI">
+    App UI is updated to reflect authenticated state.
+  </Step>
+</Steps>
+
+### Sign In Implementation
+
+```javascript
+async function signIn(email, password) {
+  const data = await authRequest('accounts:signInWithPassword', {
+    email,
+    password,
+    returnSecureToken: true
+  });
+  
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expiresIn = Number(data.expiresIn || 3600);
+  const jwt = parseJwt(data.idToken) || {};
+  
+  const session = {
+    idToken: data.idToken,
+    refreshToken: data.refreshToken,
+    uid: data.localId || jwt.user_id || '',
+    email: data.email || jwt.email || email,
+    expiresAt: nowSec + expiresIn - 30 // 30s buffer
+  };
+  
+  writeSession(session);
+  return { uid: session.uid, email: session.email };
+}
+```
+
+### Authentication Request Helper
+
+```javascript
+async function authRequest(path, body) {
+  const apiKey = getApiKey();
+  const endpoint = 
+    `https://identitytoolkit.googleapis.com/v1/${path}?key=${encodeURIComponent(apiKey)}`;
+  
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) 
+      || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  
+  return data;
+}
+```
+
+<Note>
+  The ID token expires after 1 hour. CotizaClima automatically refreshes it when needed using the refresh token.
+</Note>
+
+## Session Management
+
+Sessions are managed using sessionStorage to persist only during the browser tab's lifetime.
+
+### Session Storage Structure
+
+```javascript
+function writeSession(session) {
+  sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+function readSession() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearSession() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+}
+```
+
+Session object structure:
+
+```typescript
+interface Session {
+  idToken: string;       // JWT token for API requests
+  refreshToken: string;  // Token to refresh expired idToken
+  uid: string;           // User unique identifier
+  email: string;         // User email address
+  expiresAt: number;     // Unix timestamp when token expires
+}
+```
+
+### Getting Current User
+
+```javascript
+function getCurrentUser() {
+  const session = readSession();
+  if (!session || !session.idToken || !session.uid) return null;
+  return { uid: session.uid, email: session.email || '' };
+}
+```
+
+### Automatic Token Refresh
+
+ID tokens are automatically refreshed when they're about to expire:
+
+```javascript
+async function getValidIdToken() {
+  const session = readSession();
+  if (!session || !session.idToken) return null;
+  
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (session.expiresAt && session.expiresAt > nowSec) {
+    // Token still valid
+    return session.idToken;
+  }
+  
+  // Token expired, refresh it
+  if (!session.refreshToken) {
+    clearSession();
+    return null;
+  }
+  
+  try {
+    return await refreshIdToken(session.refreshToken);
+  } catch (e) {
+    clearSession();
+    return null;
+  }
+}
+```
+
+### Token Refresh Implementation
+
+```javascript
+async function refreshIdToken(refreshToken) {
+  const apiKey = getApiKey();
+  const endpoint = 
+    `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`;
+  
+  const form = new URLSearchParams();
+  form.set('grant_type', 'refresh_token');
+  form.set('refresh_token', refreshToken);
+  
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString()
+  });
+  
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) 
+      || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expiresIn = Number(data.expires_in || 3600);
+  const jwt = parseJwt(data.id_token) || {};
+  
+  const session = {
+    idToken: data.id_token,
+    refreshToken: data.refresh_token,
+    uid: data.user_id || jwt.user_id || '',
+    email: jwt.email || '',
+    expiresAt: nowSec + expiresIn - 30
+  };
+  
+  writeSession(session);
+  return session.idToken;
+}
+```
+
+<Info>
+  Token refresh happens automatically in the background. You don't need to manually refresh tokens.
+</Info>
+
+## Signing Out
+
+Signing out is a simple client-side operation that clears the session.
+
+```javascript
+function signOut() {
+  clearSession();
+}
+
+// Sign out from hamburger menu
+if (loginAction) {
+  loginAction.addEventListener('click', function() {
+    closeMenu();
+    if (isAuthenticated()) {
+      window.FirebaseAuthService.signOut();
+      updateAuthMenuState();
+      showToast('Sesión cerrada.', 'success');
+      return;
+    }
+    openLoginModal();
+  });
+}
+```
+
+<Note>
+  Signing out only clears the local session. It doesn't revoke tokens on the server (tokens will expire naturally after 1 hour).
+</Note>
+
+## Error Handling
+
+CotizaClima maps Firebase error codes to user-friendly messages.
+
+### Error Message Mapping
+
+```javascript
+function mapAuthError(message) {
+  const map = {
+    EMAIL_NOT_FOUND: 'Usuario no encontrado.',
+    INVALID_PASSWORD: 'Contraseña incorrecta.',
+    USER_DISABLED: 'Usuario deshabilitado.',
+    INVALID_EMAIL: 'Correo inválido.',
+    TOO_MANY_ATTEMPTS_TRY_LATER: 
+      'Demasiados intentos. Intenta más tarde.'
+  };
+  return map[message] || message;
+}
+```
+
+### Login Error Display
+
+```javascript
+async function submitLoginFromModal() {
+  const emailEl = document.getElementById('loginEmailInput');
+  const passwordEl = document.getElementById('loginPasswordInput');
+  const statusEl = document.getElementById('loginModalStatus');
+  const email = emailEl ? emailEl.value.trim() : '';
+  const password = passwordEl ? passwordEl.value : '';
+  
+  if (!email || !password) {
+    if (statusEl) {
+      statusEl.textContent = 'Completa correo y contraseña.';
+      statusEl.style.color = 'var(--red)';
+    }
+    return;
+  }
+  
+  try {
+    if (statusEl) {
+      statusEl.textContent = 'Validando credenciales...';
+      statusEl.style.color = 'var(--text-muted)';
+    }
+    await window.FirebaseAuthService.signIn(email, password);
+    updateAuthMenuState();
+    closeLoginModal();
+    showToast('Sesión iniciada. Historial habilitado.', 'success');
+  } catch (e) {
+    const mapper = window.FirebaseAuthService.mapAuthError;
+    const msg = typeof mapper === 'function' 
+      ? mapper(e.message || 'Error de autenticación') 
+      : (e.message || 'Error de autenticación');
+    if (statusEl) {
+      statusEl.textContent = msg;
+      statusEl.style.color = 'var(--red)';
+    }
+  }
+}
+```
+
+## Authentication Context
+
+Many operations require authentication context (user ID and token).
+
+### Getting Auth Context
+
+```javascript
+async function getAuthContext(requireAuth) {
+  if (!window.FirebaseAuthService) {
+    if (requireAuth) {
+      throw new Error('Módulo de autenticación no disponible.');
+    }
+    return null;
+  }
+  
+  const user = window.FirebaseAuthService.getCurrentUser();
+  const idToken = await window.FirebaseAuthService.getValidIdToken();
+  
+  if (!user || !idToken) {
+    if (requireAuth) {
+      throw new Error(
+        'Debes iniciar sesión en Historial para guardar cotizaciones.'
+      );
+    }
+    return null;
+  }
+  
+  return { user, idToken };
+}
+```
+
+### Using Auth Context
+
+```javascript
+async function persistCurrentQuote(status, options) {
+  const opts = options || {};
+  const requireAuth = !!opts.requireAuth;
+  const silent = !!opts.silent;
+  
+  try {
+    const auth = await getAuthContext(requireAuth);
+    if (!auth) return null;
+    
+    const existingId = bridge.getActiveQuoteId();
+    const payload = bridge.exportQuoteSnapshot(status || 'draft');
+    const result = await window.QuotesRepo.saveQuote(
+      auth.user.uid, 
+      auth.idToken, 
+      payload, 
+      existingId || null
+    );
+    
+    bridge.setActiveQuoteId(result.id);
+    
+    if (!silent) {
+      const label = status === 'issued' ? 'emitida' : 'guardada';
+      showToast(`Cotización ${label} correctamente`, 'success');
+    }
+    
+    return result;
+  } catch (e) {
+    if (!silent) {
+      showToast(`No se pudo guardar: ${e.message}`, 'error');
+    }
+    return null;
+  }
+}
+```
+
+## Security Considerations
+
+<Warning>
+  The Firebase API key is exposed in client-side code. This is normal and expected for Firebase web apps. Security is enforced through Firebase Security Rules, not API key secrecy.
+</Warning>
+
+### Firebase Security Rules
+
+Your Firebase project should have security rules configured:
+
+```json
+{
+  "rules": {
+    "quotes": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "clients": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "ac_rankings": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    }
+  }
+}
+```
+
+<Info>
+  These rules ensure users can only read and write their own data, even if they have the API key.
+</Info>
+
+## Session Lifetime
+
+Understand how long your session lasts:
+
+<CardGroup cols={2}>
+  <Card title="ID Token" icon="clock">
+    **Lifetime**: 1 hour
+    
+    **Auto-refresh**: Yes
+    
+    Refreshed automatically when needed
+  </Card>
+  
+  <Card title="Session Storage" icon="window">
+    **Lifetime**: Browser tab session
+    
+    **Cleared when**: Tab closes
+    
+    Sign in required in new tabs
+  </Card>
+</CardGroup>
+
+<Note>
+  Unlike localStorage, sessionStorage is cleared when you close the browser tab. This means you'll need to sign in again when you open CotizaClima in a new tab.
+</Note>
+
+## Troubleshooting Authentication
+
+<Accordion title="Cannot sign in - Invalid credentials">
+  **Possible causes:**
+  - Incorrect email or password
+  - User doesn't exist in Firebase Authentication
+  - User account is disabled
+  
+  **Solution:** Double-check credentials. Contact your administrator to verify the account exists and is enabled in Firebase Console.
+</Accordion>
+
+<Accordion title="Session expires too quickly">
+  **Possible cause:** Token refresh is failing
+  
+  **Solution:** Check browser console for errors. Ensure Firebase configuration is correct and the API key is valid.
+</Accordion>
+
+<Accordion title="Features still disabled after signing in">
+  **Possible cause:** UI didn't update after authentication
+  
+  **Solution:** Refresh the page. If the issue persists, sign out and sign in again.
+</Accordion>
+
+<Accordion title="Lost session after refreshing page">
+  **Expected behavior:** Sessions persist across page refreshes in the same tab.
+  
+  **If session is lost:** Check if your browser is blocking sessionStorage or running in incognito mode with strict settings.
+</Accordion>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Sign In When Needed" icon="right-to-bracket">
+    You can create quotes without signing in. Only sign in when you need to save quotes or access history.
+  </Card>
+  
+  <Card title="Use Strong Passwords" icon="lock">
+    Firebase Authentication supports standard password security. Use a strong, unique password.
+  </Card>
+  
+  <Card title="Sign Out on Shared Devices" icon="arrow-right-from-bracket">
+    Always sign out when using CotizaClima on shared or public devices.
+  </Card>
+  
+  <Card title="Keep Browser Updated" icon="arrow-up">
+    Ensure your browser supports sessionStorage and modern JavaScript features.
+  </Card>
+</CardGroup>
+
+<Tip>
+  If you primarily use CotizaClima for creating quotes without saving them, you don't need to sign in at all. Demo mode provides full quote creation and PDF generation capabilities.
+</Tip>

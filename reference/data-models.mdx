@@ -1,0 +1,558 @@
+---
+title: 'Data Models'
+description: 'Core data structures and schemas used in CotizaClima'
+icon: 'database'
+---
+
+## Overview
+
+CotizaClima uses several key data models to represent equipment, quotes, clients, services, and accessories. All data is stored as JSON in Firebase Realtime Database or used locally as JavaScript objects.
+
+## Equipment Data Model
+
+### Air Conditioner Schema
+
+Each AC unit has multiple capacity options with independent pricing:
+
+```json
+{
+  "marca": "Samsung",
+  "brand_model": "WindFree Elite AR09",
+  "type": "Split On-Off",
+  "refrigerant": "R32",
+  "wifi": "Yes",
+  "warranty": "3 años compresor",
+  "installation_kit": "Incluido",
+  "capacities": [
+    {
+      "btu_capacity": 9000,
+      "net_price": 294958,
+      "price_with_tax": 350000
+    },
+    {
+      "btu_capacity": 12000,
+      "net_price": 353782,
+      "price_with_tax": 421000
+    },
+    {
+      "btu_capacity": 18000,
+      "net_price": 470588,
+      "price_with_tax": 560000
+    }
+  ]
+}
+```
+
+### Field Descriptions
+
+<ResponseField name="marca" type="string" required>
+  Brand name (e.g., "Samsung", "LG", "Midea")
+</ResponseField>
+
+<ResponseField name="brand_model" type="string" required>
+  Full model name including brand and product line
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Equipment type:
+  - `"Split On-Off"` - Standard split unit
+  - `"Split Inverter"` - Variable speed inverter
+  - `"Cassette"` - Ceiling cassette unit
+  - `"Piso-Cielo"` - Floor-ceiling unit
+</ResponseField>
+
+<ResponseField name="refrigerant" type="string" required>
+  Refrigerant type: `"R32"` or `"R410"`
+</ResponseField>
+
+<ResponseField name="wifi" type="string">
+  WiFi capability:
+  - `"Yes"` - WiFi included
+  - `"Optional"` - WiFi available as accessory
+  - `"No"` or empty - No WiFi support
+</ResponseField>
+
+<ResponseField name="warranty" type="string">
+  Warranty description (e.g., "3 años compresor", "1 año")
+</ResponseField>
+
+<ResponseField name="installation_kit" type="string">
+  Installation kit status: `"Incluido"`, `"Completo"`, `"Básico"`, etc.
+</ResponseField>
+
+<ResponseField name="capacities" type="array" required>
+  Array of capacity options with pricing
+</ResponseField>
+
+### Capacity Object
+
+```typescript
+interface Capacity {
+  btu_capacity: number;      // BTU rating (9000, 12000, 18000, etc.)
+  net_price: number;         // Price without tax (19% IVA)
+  price_with_tax: number;    // Final price including tax
+}
+```
+
+### Equipment Selection Format
+
+When equipment is selected, it's stored with a composite key:
+
+```javascript app.js:106-108
+function equipKey(idx, btu) {
+  return `${idx}__${btu}`;
+}
+```
+
+```javascript
+// Example: selectedEquipments object
+{
+  "5__12000": 2,    // Equipment index 5, 12K BTU, quantity 2
+  "12__18000": 1    // Equipment index 12, 18K BTU, quantity 1
+}
+```
+
+### Retrieving Selected Equipment
+
+```javascript app.js:110-123
+function getSelectedEquipmentItems() {
+  return Object.entries(selectedEquipments)
+    .map(([key, qty]) => {
+      const [idxStr, btuStr] = key.split('__');
+      const idx = Number(idxStr);
+      const btu = Number(btuStr);
+      const ac = allAC[idx];
+      if (!ac || !qty) return null;
+      const cap = (ac.capacities || []).find(c => Number(c.btu_capacity) === btu);
+      if (!cap) return null;
+      return { key, idx, btu, qty, ac, cap };
+    })
+    .filter(Boolean);
+}
+```
+
+## Quote Data Model
+
+### Complete Quote Schema
+
+```typescript
+interface QuoteSnapshot {
+  schemaVersion: number;           // Schema version (currently 1)
+  status: 'draft' | 'issued';      // Quote status
+  quoteNumber: string;             // Formatted quote number (e.g., "CL-2026-0001")
+  quoteDate: string;               // ISO date string
+  activeQuoteId: string | null;    // Firebase quote ID
+  client: ClientData;
+  notes: {
+    service: string;               // Service notes
+    client: string;                // Client notes
+  };
+  equipmentSelections: EquipmentSelection[];
+  serviceSelection: ServiceSelection;
+  accessoriesQty: Record<string, number>;
+  pricing: PricingData;
+}
+```
+
+### Client Data
+
+```typescript
+interface ClientData {
+  name: string;           // Client full name
+  rut: string;            // Chilean RUT (tax ID)
+  phone: string;
+  email: string;
+  address: string;        // Installation address
+  city: string;
+  region: string;         // Chilean region
+  property: string;       // Property type (Casa, Departamento, etc.)
+  notes: string;          // Additional notes
+}
+```
+
+### Equipment Selection
+
+```typescript
+interface EquipmentSelection {
+  marca: string;          // Brand name
+  brandModel: string;     // Model name
+  btu: number;            // BTU capacity
+  qty: number;            // Quantity selected
+}
+```
+
+Example:
+
+```javascript app.js:1537-1544
+function getEquipmentSelectionsSnapshot() {
+  return getSelectedEquipmentItems().map(item => ({
+    marca: item.ac.marca || '',
+    brandModel: item.ac.brand_model || '',
+    btu: Number(item.btu),
+    qty: Number(item.qty)
+  }));
+}
+```
+
+### Service Selection
+
+```typescript
+interface ServiceSelection {
+  selectedService: string | null;   // Single service ID (reparacion, cambio, etc.)
+  serviceQtyMap: {
+    instalacion: number;            // Installation service quantity
+    mantencion: number;             // Maintenance service quantity
+  };
+  instalacionUnitValue: number;     // Installation price per unit
+  mantencionUnitValue: number;      // Maintenance price per unit
+  repairQty: number;                // Repair service quantity
+  repairUnitValue: number;          // Repair service price
+}
+```
+
+### Pricing Data
+
+```typescript
+interface PricingData {
+  equipment: number;       // Total equipment price
+  services: number;        // Total services price
+  accessories: number;     // Total accessories price
+  subtotal: number;        // Sum before discount
+  discountPct: number;     // Discount percentage (0-100)
+  discountAmount: number;  // Calculated discount amount
+  total: number;           // Final total
+}
+```
+
+Example calculation:
+
+```javascript app.js:1560-1613
+function exportQuoteSnapshot(status = 'draft') {
+  const selectedServiceItems = getSelectedServiceItems();
+  const serviceTotal = selectedServiceItems.reduce((sum, item) => sum + item.totalPrice, 0);
+  const equipmentTotal = getEquipmentTotalPrice();
+  let accessoriesTotal = 0;
+  ACCESSORIES.forEach(acc => {
+    accessoriesTotal += (accQty[acc.id] || 0) * acc.price;
+  });
+
+  const equipInput = document.getElementById('sumEquipPrice');
+  const svcInput = document.getElementById('sumServicePrice');
+  const discountInput = document.getElementById('discountPct');
+
+  const equipPrice = equipInput ? (parseFloat(equipInput.value) || equipmentTotal) : equipmentTotal;
+  const servicePrice = svcInput ? (parseFloat(svcInput.value) || serviceTotal) : serviceTotal;
+  const discountPct = discountInput ? (parseFloat(discountInput.value) || 0) : 0;
+  const subtotal = equipPrice + servicePrice + accessoriesTotal;
+  const discountAmount = subtotal * discountPct / 100;
+  const total = subtotal - discountAmount;
+
+  return {
+    schemaVersion: 1,
+    status,
+    quoteNumber,
+    quoteDate: new Date().toISOString(),
+    activeQuoteId,
+    client: getClientSnapshot(),
+    notes: {
+      service: document.getElementById('serviceNotes').value || '',
+      client: document.getElementById('clientNotes').value || ''
+    },
+    equipmentSelections: getEquipmentSelectionsSnapshot(),
+    serviceSelection: {
+      selectedService,
+      serviceQtyMap: {
+        instalacion: Number(serviceQtyMap.instalacion || 0),
+        mantencion: Number(serviceQtyMap.mantencion || 0)
+      },
+      instalacionUnitValue: Number(instalacionUnitValue || 100000),
+      mantencionUnitValue: Number(mantencionUnitValue || 30000),
+      repairQty: Number(repairQty || 1),
+      repairUnitValue: Number(repairUnitValue || 0)
+    },
+    accessoriesQty: getAccessoriesQtySnapshot(),
+    pricing: {
+      equipment: Math.round(equipPrice),
+      services: Math.round(servicePrice),
+      accessories: Math.round(accessoriesTotal),
+      subtotal: Math.round(subtotal),
+      discountPct,
+      discountAmount: Math.round(discountAmount),
+      total: Math.round(total)
+    }
+  };
+}
+```
+
+## Service Data Model
+
+### Service Schema
+
+```javascript app.js:5-12
+const SERVICES = [
+  { id:'instalacion', name:'Instalación nueva', desc:'Primera instalación del equipo', price:100000, icon:'fa-hammer' },
+  { id:'mantencion', name:'Mantención', desc:'Limpieza y revisión general', price:30000, icon:'fa-screwdriver-wrench' },
+  { id:'cambio', name:'Cambio + instalación', desc:'Retiro equipo antiguo + nuevo', price:120000, icon:'fa-arrow-right-arrow-left' },
+  { id:'reparacion', name:'Reparación', desc:'Diagnóstico y reparación de fallas', price:10000, icon:'fa-gear' },
+  { id:'garantia', name:'Visita garantía', desc:'Revisión por garantía vigente', price:0, icon:'fa-shield' },
+  { id:'presupuesto', name:'Solo presupuesto', desc:'Cotización sin instalación', price:0, icon:'fa-clipboard-list' },
+];
+```
+
+### Service Types
+
+<AccordionGroup>
+  <Accordion title="Multi-Service (Quantity-based)">
+    Services that can be added multiple times:
+    - **instalacion** - Installation service
+    - **mantencion** - Maintenance service
+    
+    ```javascript app.js:771-773
+    function isMultiService(id) {
+      return id === 'instalacion' || id === 'mantencion';
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Single-Service (One-time)">
+    Services that can only be selected once:
+    - **cambio** - Equipment change
+    - **reparacion** - Repair (with custom quantity/price)
+    - **garantia** - Warranty visit
+    - **presupuesto** - Quote only
+  </Accordion>
+</AccordionGroup>
+
+## Accessories Data Model
+
+### Accessory Schema
+
+```typescript
+interface Accessory {
+  id: string;           // Unique identifier
+  name: string;         // Display name
+  desc: string;         // Description
+  categoria: string;    // Category (cañerias, electrico, instalacion, etc.)
+  price: number;        // Unit price (with tax)
+  color: string;        // UI color (hex code)
+}
+```
+
+Example:
+
+```json
+{
+  "id": "kit_can_9k",
+  "name": "Kit cañerías 9K",
+  "desc": "3 metros cobre + aislante",
+  "categoria": "cañerias",
+  "price": 25000,
+  "color": "#4A90E2"
+}
+```
+
+### Icon Mapping
+
+Accessories use Font Awesome icons mapped by ID or category:
+
+```javascript app.js:914-943
+const ACC_ICON_MAP = {
+  // By ID (takes priority)
+  kit_can_9k:        'fa-ruler-combined',
+  kit_can_12_18k:    'fa-ruler-combined',
+  kit_can_24k:       'fa-ruler-combined',
+  cordon_15:         'fa-bolt',
+  cordon_25:         'fa-bolt',
+  soporte_techo:     'fa-thumbtack',
+  kit_drenaje:       'fa-droplet',
+  breaker_16a:       'fa-plug',
+  mantencion_lavado: 'fa-spray-can-sparkles',
+  gas_r410_12k:      'fa-temperature-low',
+  gas_r410_18_32k:   'fa-temperature-low',
+  gas_r32_12k:       'fa-temperature-low',
+  gas_r32_18_32k:    'fa-temperature-low',
+  // Fallback by category
+  _cat_cañerias:     'fa-ruler-combined',
+  _cat_electrico:    'fa-bolt',
+  _cat_instalacion:  'fa-screwdriver-wrench',
+  _cat_mantencion:   'fa-spray-can-sparkles',
+  _cat_gas:          'fa-temperature-low',
+};
+
+function getAccIcon(acc) {
+  return ACC_ICON_MAP[acc.id]
+    || ACC_ICON_MAP['_cat_' + (acc.categoria || '')]
+    || 'fa-box';
+}
+```
+
+## Client Data Model (Directory)
+
+Clients are stored in Firebase with RUT-based deduplication:
+
+```typescript
+interface ClientRecord {
+  name: string;
+  rut: string;
+  rutKey: string;              // Normalized RUT used as Firebase key
+  phone: string;
+  email: string;
+  address: string;
+  city: string;
+  region: string;
+  property: string;
+  notes: string;
+  createdAt: number;           // Unix timestamp
+  updatedAt: number;           // Unix timestamp
+  quoteIds: Record<string, true>; // Set of associated quote IDs
+}
+```
+
+### RUT Normalization
+
+```javascript client-repo.js:36-41
+function normalizeRut(rut) {
+  if (!rut || typeof rut !== 'string') return '';
+  return rut.replace(/\./g, '').replace(/\s/g, '').toLowerCase().trim();
+}
+```
+
+Example: `"12.345.678-9"` → `"12345678-9"`
+
+### Client ID Resolution
+
+```javascript client-repo.js:43-50
+function resolveClientId(client) {
+  if (!client) return null;
+  const rut = normalizeRut(client.rut || '');
+  // Require at least one digit + hyphen + digit
+  if (!rut || !/\d/.test(rut) || rut.length < 3) return null;
+  return rut;
+}
+```
+
+## Equipment Ranking Model
+
+Tracks equipment popularity per user:
+
+```typescript
+interface RankingRecord {
+  marca: string;
+  brandModel: string;
+  count: number;              // Number of times quoted
+  updatedAt: number;          // Firebase server timestamp
+}
+```
+
+### Model Key Generation
+
+```javascript ranking-repo.js:34-38
+function modelKey(brandModel) {
+  return (brandModel || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+```
+
+Example: `"Samsung WindFree 9K"` → `"samsung_windfree_9k"`
+
+### Atomic Increment
+
+Uses Firebase server-side increment for race-condition safety:
+
+```javascript ranking-repo.js:58-70
+const body = {
+  marca: item.marca || '',
+  brandModel: item.brandModel || '',
+  count: { '.sv': { increment: 1 } },
+  updatedAt: { '.sv': 'timestamp' }
+};
+return request('rankings/' + uid + '/' + key, idToken, {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body)
+});
+```
+
+## Quote Number Format
+
+### Current Format
+
+```plaintext
+CL-YYYY-####
+
+Examples:
+CL-2026-0001
+CL-2026-0042
+CL-2027-0001  (resets each year)
+```
+
+### Generation Logic
+
+```javascript app.js:374-380
+function buildQuoteNumber(datePart, sequence) {
+  return `CL-${datePart}-${String(Math.max(1, Number(sequence) || 1)).padStart(4, '0')}`;
+}
+
+function getQuoteDatePart(date = new Date()) {
+  return String(date.getFullYear());
+}
+```
+
+### Legacy Format Support
+
+Older quotes used a different format:
+
+```plaintext
+COT-YYYYMMDD-####
+
+Example:
+COT-20260311-0001
+```
+
+Parsing supports both formats:
+
+```javascript app.js:382-402
+function parseQuoteSequence(quoteNum, datePart) {
+  if (!quoteNum) return 0;
+  const normalized = String(quoteNum).trim().toUpperCase();
+
+  // Nuevo formato: CL-2026-0001
+  const currentFmt = normalized.match(/^CL-(\d{4})-(\d{4,})$/);
+  if (currentFmt) {
+    if (datePart && currentFmt[1] !== String(datePart)) return 0;
+    return Number(currentFmt[2] || 0) || 0;
+  }
+
+  // Compatibilidad con formato anterior: COT-20260311-0001
+  const legacyFmt = normalized.match(/^COT-(\d{8})-(\d{4,})$/);
+  if (legacyFmt) {
+    const legacyYear = legacyFmt[1].slice(0, 4);
+    if (datePart && legacyYear !== String(datePart)) return 0;
+    return Number(legacyFmt[2] || 0) || 0;
+  }
+
+  return 0;
+}
+```
+
+## Storage Keys
+
+### SessionStorage
+
+```javascript
+'cotiz_auth_session_v1'        // Firebase auth session
+'cotiz_pending_quote_v1'       // Quote being edited from history
+```
+
+### LocalStorage
+
+```javascript
+'cotiz_quote_counter_2026'     // Local quote counter per year
+'cotiz_quote_counter_2027'     // (increments annually)
+```
+
+<Warning>
+  LocalStorage counters are fallbacks. The authoritative counter comes from Firebase quote history.
+</Warning>

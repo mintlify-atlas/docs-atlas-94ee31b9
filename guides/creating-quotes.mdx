@@ -1,0 +1,537 @@
+---
+title: Creating Quotes
+description: Learn how to create professional air conditioning quotes in CotizaClima with our step-by-step guide
+---
+
+CotizaClima uses a 5-step wizard to guide you through creating professional air conditioning installation quotes. Each step collects specific information to build a complete, accurate quotation.
+
+## Quote Creation Workflow
+
+The quote creation process is structured as a multi-step form with visual progress tracking:
+
+<Steps>
+  <Step title="Select Equipment">
+    Browse and select air conditioning units from the equipment catalog. Filter by brand, BTU capacity, or refrigerant type.
+  </Step>
+  
+  <Step title="Choose Service Type">
+    Select the type of service: installation, maintenance, repair, or equipment change. Specify quantities for each service type.
+  </Step>
+  
+  <Step title="Add Accessories">
+    Optionally add accessories and extras like copper piping, installation kits, or additional components.
+  </Step>
+  
+  <Step title="Enter Client Information">
+    Fill in complete client details including name, address, contact information, and property type.
+  </Step>
+  
+  <Step title="Review and Generate">
+    Review the complete quote, adjust pricing if needed, apply discounts, and generate the final PDF.
+  </Step>
+</Steps>
+
+## Step 1: Selecting Equipment
+
+The equipment selection page displays all available air conditioning units from your Firebase database.
+
+### Searching and Filtering
+
+Use the search and filter tools to quickly find the right equipment:
+
+```html
+<!-- Search box for brand or model -->
+<div class="search-box">
+  <input type="text" id="searchInput" 
+         placeholder="Buscar marca o modelo…" 
+         oninput="filterAC()">
+</div>
+
+<!-- Filter dropdowns -->
+<div class="filters-grid">
+  <select id="filterBrand" onchange="filterAC()">
+    <option value="">Todas las marcas</option>
+  </select>
+  <select id="filterBTU" onchange="filterAC()">
+    <option value="">Todos los BTU</option>
+    <option value="9000">9.000 BTU</option>
+    <option value="12000">12.000 BTU</option>
+    <option value="18000">18.000 BTU</option>
+  </select>
+  <select id="filterRef" onchange="filterAC()">
+    <option value="">Todo refrigerante</option>
+    <option value="R32">R32</option>
+    <option value="R410">R410</option>
+  </select>
+</div>
+```
+
+### Most Quoted Equipment
+
+Click the "Más cotizados" (Most Quoted) button to sort equipment by popularity:
+
+```javascript
+function toggleSortByPopular() {
+  sortRankingMode = (sortRankingMode + 1) % 3;
+  // 0 = most quoted (desc)
+  // 1 = least quoted (asc)
+  // 2 = original order
+  filterAC();
+  updateSortBtn();
+}
+```
+
+<Info>
+  The "Most Quoted" feature tracks which equipment you quote most frequently and helps you find popular models faster.
+</Info>
+
+### Selecting Multiple Units
+
+You can select multiple equipment units with different capacities:
+
+```javascript
+function equipKey(idx, btu) {
+  return `${idx}__${btu}`;
+}
+
+function getSelectedEquipmentItems() {
+  return Object.entries(selectedEquipments)
+    .map(([key, qty]) => {
+      const [idxStr, btuStr] = key.split('__');
+      const idx = Number(idxStr);
+      const btu = Number(btuStr);
+      const ac = allAC[idx];
+      if (!ac || !qty) return null;
+      const cap = (ac.capacities || []).find(c => 
+        Number(c.btu_capacity) === btu
+      );
+      if (!cap) return null;
+      return { key, idx, btu, qty, ac, cap };
+    })
+    .filter(Boolean);
+}
+```
+
+<Tip>
+  You can add multiple quantities of the same equipment model if your client needs multiple units for different rooms.
+</Tip>
+
+## Step 2: Service Selection
+
+Choose the type of service you'll provide with the equipment.
+
+### Available Service Types
+
+CotizaClima supports six predefined service types:
+
+```javascript
+const SERVICES = [
+  { 
+    id: 'instalacion', 
+    name: 'Instalación nueva', 
+    desc: 'Primera instalación del equipo', 
+    price: 100000, 
+    icon: 'fa-hammer' 
+  },
+  { 
+    id: 'mantencion', 
+    name: 'Mantención', 
+    desc: 'Limpieza y revisión general', 
+    price: 30000, 
+    icon: 'fa-screwdriver-wrench' 
+  },
+  { 
+    id: 'cambio', 
+    name: 'Cambio + instalación', 
+    desc: 'Retiro equipo antiguo + nuevo', 
+    price: 120000, 
+    icon: 'fa-arrow-right-arrow-left' 
+  },
+  { 
+    id: 'reparacion', 
+    name: 'Reparación', 
+    desc: 'Diagnóstico y reparación de fallas', 
+    price: 10000, 
+    icon: 'fa-gear' 
+  },
+  { 
+    id: 'garantia', 
+    name: 'Visita garantía', 
+    desc: 'Revisión por garantía vigente', 
+    price: 0, 
+    icon: 'fa-shield' 
+  },
+  { 
+    id: 'presupuesto', 
+    name: 'Solo presupuesto', 
+    desc: 'Cotización sin instalación', 
+    price: 0, 
+    icon: 'fa-clipboard-list' 
+  }
+];
+```
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="hammer">
+    New installation includes mounting indoor/outdoor units, connecting refrigerant lines, electrical connection, and system testing.
+  </Card>
+  <Card title="Maintenance" icon="wrench">
+    Preventive maintenance includes filter cleaning, coil cleaning, electrical checks, and performance verification.
+  </Card>
+  <Card title="Repair" icon="gear">
+    Diagnostic and repair service for malfunctioning equipment with detailed technical assessment.
+  </Card>
+  <Card title="Equipment Change" icon="arrow-right-arrow-left">
+    Remove old unit and install new equipment, including all connections and testing.
+  </Card>
+</CardGroup>
+
+### Service Quantities
+
+For installation and maintenance, specify how many service instances you need:
+
+```javascript
+let serviceQtyMap = { instalacion: 0, mantencion: 0 };
+
+function preloadInstallationsFromEquipment() {
+  const equipCount = getEquipCount();
+  if (equipCount === 0) {
+    serviceQtyMap.instalacion = 0;
+  } else if ((serviceQtyMap.instalacion || 0) === 0) {
+    // Default: 1 installation per equipment
+    serviceQtyMap.instalacion = equipCount;
+  } else {
+    // Clamp if user removed equipment
+    serviceQtyMap.instalacion = Math.min(
+      serviceQtyMap.instalacion, 
+      equipCount
+    );
+  }
+}
+```
+
+<Note>
+  By default, CotizaClima automatically sets the installation quantity to match the number of equipment units selected in Step 1.
+</Note>
+
+### Service Notes
+
+Add detailed observations about the service requirements:
+
+```html
+<div class="form-group">
+  <label class="form-label">Observaciones del servicio</label>
+  <textarea class="form-textarea" id="serviceNotes" 
+            placeholder="Describe condiciones especiales, metros de cañería, acceso al lugar, etc.">
+  </textarea>
+  <div class="notes-hint">Estos datos aparecerán en la cotización.</div>
+</div>
+```
+
+<Tip>
+  Use service notes to document special conditions like extra piping length, difficult access, wall types, or any other installation requirements that affect the quote.
+</Tip>
+
+## Step 3: Adding Accessories
+
+Add optional accessories and extras to the quote. Accessories are loaded from Firebase and can include:
+
+- Copper piping extensions
+- Installation kits
+- Mounting brackets
+- Electrical components
+- Drain lines and accessories
+
+```javascript
+// Accessories are stored in state
+let accQty = {}; // { accessoryId: quantity }
+
+function getAccessoryTotal() {
+  return Object.entries(accQty).reduce((sum, [id, qty]) => {
+    const acc = accessories.find(a => a.id === id);
+    return sum + (acc ? acc.price * qty : 0);
+  }, 0);
+}
+```
+
+<Info>
+  This step is optional. You can skip it if no additional accessories are needed for the installation.
+</Info>
+
+## Step 4: Client Information
+
+Collect complete client details to personalize the quote and enable follow-up.
+
+### Required Fields
+
+The following fields are required to proceed:
+
+- **Client Name** - Full name of the client or company
+- **Installation Address** - Complete address where the equipment will be installed
+
+### GPS Address Autocomplete
+
+Use your device's GPS to automatically fill address and city:
+
+```html
+<div class="form-group">
+  <label class="form-label">Dirección de instalación *</label>
+  <div class="input-inline-action">
+    <input type="text" class="form-input" id="clientAddress" 
+           placeholder="Calle, número, comuna">
+    <button type="button" class="btn btn-secondary btn-gps" 
+            id="btnUseGpsAddress" 
+            onclick="fillAddressFromGPS()">
+      Usar GPS
+    </button>
+  </div>
+  <div class="notes-hint" id="gpsAddressStatus">
+    Permite autocompletar direccion y ciudad desde tu ubicacion actual.
+  </div>
+</div>
+```
+
+<Warning>
+  GPS functionality requires location permissions from your browser. The feature uses reverse geocoding to convert coordinates to a readable address.
+</Warning>
+
+### Client Information Fields
+
+<Accordion title="Complete Client Fields Reference">
+  | Field | Type | Required | Description |
+  |-------|------|----------|-------------|
+  | Name | Text | Yes | Full name or business name |
+  | RUT | Text | No | Chilean tax ID (used for client deduplication) |
+  | Phone | Tel | No | Contact phone number |
+  | Email | Email | No | Client email address |
+  | Address | Text | Yes | Installation address |
+  | City | Text | No | City name (auto-filled with GPS) |
+  | Region | Select | No | Chilean region (defaults to Maule) |
+  | Property Type | Select | No | Casa, Departamento, Oficina, Local, or Bodega |
+  | Notes | Textarea | No | Additional instructions or access details |
+</Accordion>
+
+```html
+<!-- Region selector with Chilean regions -->
+<select class="form-select-full" id="clientRegion">
+  <option value="">Seleccionar</option>
+  <option value="Arica y Parinacota">Arica y Parinacota</option>
+  <option value="Tarapacá">Tarapacá</option>
+  <option value="Antofagasta">Antofagasta</option>
+  <!-- ... more regions ... -->
+  <option value="Maule" selected>Maule</option>
+  <option value="Biobío">Biobío</option>
+  <option value="Magallanes">Magallanes</option>
+</select>
+```
+
+## Step 5: Review and Generate PDF
+
+The final step displays a complete summary of the quote with editable pricing.
+
+### Quote Summary
+
+Review all quote details organized in cards:
+
+```javascript
+// Summary includes:
+// - Quote number (auto-generated: CL-YYYY-####)
+// - Date and validity period (15 days)
+// - Client information
+// - Equipment details
+// - Service type and pricing
+// - Accessories (if any)
+// - Discount and total
+```
+
+### Adjusting Prices
+
+You can edit equipment and service prices directly in the summary:
+
+```html
+<div class="summary-row">
+  <div class="summary-row-label">Precio equipo (c/IVA)</div>
+  <input type="number" class="summary-row-val edit-field" 
+         id="sumEquipPrice" 
+         oninput="recalcTotal()">
+</div>
+
+<div class="summary-row">
+  <div class="summary-row-label">Precio servicio</div>
+  <input type="number" class="summary-row-val edit-field" 
+         id="sumServicePrice" 
+         oninput="recalcTotal()">
+</div>
+```
+
+<Tip>
+  Price adjustments allow you to offer custom pricing based on negotiations, special conditions, or bulk discounts without changing base prices.
+</Tip>
+
+### Applying Discounts
+
+Enter a percentage discount to reduce the total:
+
+```html
+<div class="summary-card">
+  <div class="summary-title">
+    <i class="fas fa-tag"></i> Descuento
+  </div>
+  <div class="summary-row">
+    <div class="summary-row-label">
+      <input type="number" id="discountPct" 
+             class="discount-pct-input" 
+             placeholder="% descuento" 
+             min="0" max="100" 
+             oninput="recalcTotal()">
+    </div>
+    <div class="summary-row-val discount-badge" id="discountBadgeAmt">
+      — $0
+    </div>
+  </div>
+</div>
+```
+
+```javascript
+function recalcTotal() {
+  const equipPrice = Number($('sumEquipPrice').value || 0);
+  const servicePrice = Number($('sumServicePrice').value || 0);
+  const extrasTotal = getExtrasTotal();
+  const subtotal = equipPrice + servicePrice + extrasTotal;
+  
+  const discountPct = Number($('discountPct').value || 0);
+  const discountAmt = Math.round(subtotal * (discountPct / 100));
+  const grandTotal = subtotal - discountAmt;
+  
+  $('discountBadgeAmt').textContent = `— $${fmtNum(discountAmt)}`;
+  $('grandTotal').textContent = fmtNum(grandTotal);
+}
+```
+
+### Generating the PDF
+
+Click "Generar PDF" to create a professional quote document:
+
+```javascript
+async function generatePDF() {
+  // Uses jsPDF library to create professional quote
+  // Includes company branding, client info, itemized pricing
+  // Auto-saves as "issued" status if authenticated
+  
+  await original(); // Generate PDF
+  
+  if (saved) {
+    showToast('PDF generado y cotización guardada', 'success');
+  }
+}
+```
+
+<Note>
+  When authenticated, generating a PDF automatically saves the quote with "issued" status to your history.
+</Note>
+
+## Saving vs. Issuing Quotes
+
+CotizaClima distinguishes between draft and issued quotes:
+
+<CardGroup cols={2}>
+  <Card title="Save Draft" icon="floppy-disk">
+    Saves the current quote as a draft without generating PDF. Useful for incomplete quotes or quotes pending approval.
+    
+    **Status**: `draft`
+    
+    **Requires**: Authentication
+  </Card>
+  
+  <Card title="Issue Quote" icon="file-pdf">
+    Generates PDF and marks quote as issued. This is the final, client-ready version.
+    
+    **Status**: `issued`
+    
+    **Requires**: Authentication (optional)
+  </Card>
+</CardGroup>
+
+### Saving a Draft
+
+```javascript
+async function saveDraftQuote() {
+  return persistCurrentQuote('draft', { 
+    requireAuth: true, 
+    silent: false 
+  });
+}
+```
+
+```html
+<button class="btn btn-secondary" onclick="saveDraftQuote()">
+  <i class="fas fa-floppy-disk"></i> Guardar borrador
+</button>
+```
+
+### Auto-Save on PDF Generation
+
+When you generate a PDF while authenticated, the quote is automatically saved:
+
+```javascript
+function patchGeneratePdfForAutosave() {
+  const original = window.generatePDF;
+  window.generatePDF = async function patchedGeneratePDF() {
+    let saved = null;
+    try {
+      saved = await persistCurrentQuote('issued', { 
+        requireAuth: false, 
+        silent: true 
+      });
+    } catch (e) {
+      saved = null;
+    }
+    
+    await original();
+    
+    if (saved) {
+      showToast('PDF generado y cotización guardada', 'success');
+    }
+  };
+}
+```
+
+<Info>
+  You can generate PDFs without being authenticated, but the quote won't be saved to your history.
+</Info>
+
+## Starting a New Quote
+
+After completing a quote, click "Nueva cotiz." to reset and start fresh:
+
+```html
+<button class="btn btn-danger" onclick="resetAll()">
+  <i class="fas fa-rotate-right"></i> Nueva cotiz.
+</button>
+```
+
+This clears all selections and returns to Step 1 with a new quote number.
+
+## Tips for Efficient Quote Creation
+
+<CardGroup cols={2}>
+  <Card title="Use Keyboard Navigation" icon="keyboard">
+    Press Tab to move between fields quickly. The wizard buttons at the bottom let you navigate between steps efficiently.
+  </Card>
+  
+  <Card title="Save Frequently" icon="floppy-disk">
+    Save draft quotes frequently to avoid losing work. You can resume editing from the quote history page.
+  </Card>
+  
+  <Card title="Leverage GPS" icon="location-dot">
+    Use GPS autocomplete for address and city to reduce typing and ensure accuracy.
+  </Card>
+  
+  <Card title="Adjust Prices Last" icon="dollar-sign">
+    Make pricing adjustments in Step 5 after reviewing the complete quote. This ensures you see the total impact.
+  </Card>
+</CardGroup>
+
+<Note>
+  The wizard automatically saves your progress as you navigate between steps, so you won't lose data if you go back to edit earlier steps.
+</Note>

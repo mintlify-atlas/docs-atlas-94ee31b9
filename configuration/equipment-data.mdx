@@ -1,0 +1,426 @@
+---
+title: 'Equipment Data'
+description: 'Manage your air conditioning equipment catalog in Firebase'
+---
+
+## Overview
+
+CotizaClima stores all equipment data in Firebase Realtime Database under the `air_conditioners` node. This data drives the equipment selection interface, pricing, and PDF quotes.
+
+---
+
+## Equipment Data Model
+
+Each equipment entry follows this structure:
+
+```json
+{
+  "marca": "LG",
+  "brand_model": "Dual Inverter V Plus",
+  "type": "Split",
+  "refrigerant": "R32",
+  "wifi": "Yes",
+  "warranty": "3 years",
+  "installation_kit": "Standard",
+  "capacities": [
+    {
+      "btu_capacity": 9000,
+      "net_price": 289900,
+      "price_with_tax": 345000
+    },
+    {
+      "btu_capacity": 12000,
+      "net_price": 336134,
+      "price_with_tax": 400000
+    }
+  ]
+}
+```
+
+### Field Reference
+
+<ResponseField name="marca" type="string" required>
+  Brand name (e.g., "LG", "Midea", "Daitsu")
+  
+  - Used for filtering and brand logo display
+  - Case-sensitive for logo matching
+</ResponseField>
+
+<ResponseField name="brand_model" type="string" required>
+  Full model name/description
+  
+  - Displayed as the equipment title in cards
+  - Used for search functionality
+  - Should be unique per brand
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Equipment type (e.g., "Split", "Window", "Cassette")
+  
+  - Displayed as secondary text in equipment cards
+  - Common values: `"Split"`, `"Multi-Split"`, `"Window"`
+</ResponseField>
+
+<ResponseField name="refrigerant" type="string" required>
+  Refrigerant type: `"R32"` or `"R410"`
+  
+  - Affects badge color (R32 = green, R410 = orange)
+  - Used in filtering
+  - Displayed in equipment specifications
+</ResponseField>
+
+<ResponseField name="wifi" type="string">
+  WiFi capability: `"Yes"`, `"Optional"`, or `"No"`
+  
+  - Controls WiFi icon display
+  - Shown in equipment specs
+  - Default: `"No"`
+</ResponseField>
+
+<ResponseField name="warranty" type="string">
+  Warranty period (e.g., `"1 year"`, `"3 years"`)
+  
+  - Affects warranty badge display
+  - Shown with shield icon if contains "3"
+  - Default: `"1 year"`
+</ResponseField>
+
+<ResponseField name="installation_kit" type="string">
+  Installation kit type (e.g., `"Standard"`, `"Premium"`, `"Basic"`)
+  
+  - Displayed in specs with box icon
+  - Shown in PDF quote details
+</ResponseField>
+
+<ResponseField name="capacities" type="array" required>
+  Array of capacity options with pricing
+  
+  Each capacity object must have:
+  - `btu_capacity` (number): BTU value (e.g., 9000, 12000, 18000)
+  - `net_price` (number): Price without tax in local currency
+  - `price_with_tax` (number): Price including tax (typically net_price × 1.19)
+</ResponseField>
+
+---
+
+## Adding New Equipment
+
+<Steps>
+  <Step title="Prepare Equipment Data">
+    Create a JSON object following the data model above:
+    
+    ```json
+    {
+      "marca": "Midea",
+      "brand_model": "Mission Pro Inverter",
+      "type": "Split",
+      "refrigerant": "R32",
+      "wifi": "Optional",
+      "warranty": "3 years",
+      "installation_kit": "Standard",
+      "capacities": [
+        {
+          "btu_capacity": 12000,
+          "net_price": 252100,
+          "price_with_tax": 300000
+        },
+        {
+          "btu_capacity": 18000,
+          "net_price": 378151,
+          "price_with_tax": 450000
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Add to Firebase">
+    **Option 1: Firebase Console**
+    1. Go to Realtime Database
+    2. Navigate to `air_conditioners` node
+    3. Click **+** to add a child
+    4. Paste your JSON
+    
+    **Option 2: Import/Export**
+    1. Export current data
+    2. Add your new equipment to the array
+    3. Re-import the complete JSON
+  </Step>
+
+  <Step title="Verify in App">
+    1. Reload your CotizaClima app
+    2. Check the equipment appears in the catalog
+    3. Test filtering and selection
+  </Step>
+</Steps>
+
+<Tip>
+  **Price Calculation:** Chilean standard is 19% IVA tax. Use `price_with_tax = net_price × 1.19` to calculate.
+</Tip>
+
+---
+
+## Brand Icons Configuration
+
+CotizaClima automatically displays brand logos for equipment. The system searches for brand icon files based on the `marca` field.
+
+### Icon Resolution
+
+Brand icons are configured in `app.js`:
+
+```javascript app.js
+const BRAND_ICON_DIR = 'assets/img';
+
+const BRAND_ICON_EXTENSIONS = ['svg', 'png', 'webp', 'jpg', 'jpeg'];
+
+const BRAND_ICON_OVERRIDES = {
+  daitsu: ['daitsu'],
+  ika: ['ika'],
+  kendal: ['kendal'],
+  lg: ['lg'],
+  midea: ['midea'],
+  tcl: ['tcl'],
+  clark: ['clark']
+};
+```
+
+### How Icon Matching Works
+
+1. Brand name is normalized: `"LG"` → `"lg"`
+2. System searches for files in this order:
+   - `assets/img/lg.svg`
+   - `assets/img/lg.png`
+   - `assets/img/lg.webp`
+   - `assets/img/lg.jpg`
+   - `assets/img/lg.jpeg`
+3. First found file is displayed
+4. If none found, no logo is shown
+
+### Adding Brand Icons
+
+<Steps>
+  <Step title="Prepare Your Logo">
+    - Format: SVG (recommended) or PNG
+    - Size: Approximately 100×40px
+    - Transparent background preferred
+    - File size: < 50KB
+  </Step>
+
+  <Step title="Save to Assets">
+    Place your logo file in:
+    ```
+    source/assets/img/brandname.svg
+    ```
+    
+    Use lowercase, no spaces (e.g., `lg.svg`, `midea.png`)
+  </Step>
+
+  <Step title="Test Display">
+    1. Reload the app
+    2. Navigate to equipment selection
+    3. Verify the logo displays correctly
+  </Step>
+</Steps>
+
+### Custom Icon Mappings
+
+For brands with special naming, add to `BRAND_ICON_OVERRIDES`:
+
+```javascript app.js
+const BRAND_ICON_OVERRIDES = {
+  // Brand "Carrier" searches for "carrier-logo.svg"
+  carrier: ['carrier-logo'],
+  
+  // Brand "General Electric" searches for "ge.svg"
+  'general-electric': ['ge'],
+  
+  // Multiple fallbacks
+  daikin: ['daikin', 'daikin-alt', 'daikin-logo']
+};
+```
+
+<Note>
+  The normalization process converts `"General Electric"` → `"general-electric"` automatically.
+</Note>
+
+---
+
+## Demo Data vs. Production Data
+
+### Demo Data
+
+When Firebase is not configured, the app uses demo data defined in `app.js`:
+
+```javascript app.js
+const DEMO_DATA = [
+  // Array of equipment objects
+  // Used when FIREBASE_CONNECTION.databaseURL is empty
+];
+```
+
+**Demo data is loaded when:**
+- `databaseURL` is empty in `FIREBASE_CONNECTION`
+- Firebase connection fails
+- Database rules block access
+- Network is unavailable
+
+### Production Data
+
+**Production data is loaded from Firebase when:**
+- Valid `databaseURL` is configured
+- Database contains `air_conditioners` node
+- Security rules allow read access
+- Network connection is available
+
+<Info>
+  The app shows a **status indicator** in the header:
+  - 🟢 Green dot = Firebase connected (production data)
+  - 🔴 Red dot = Demo data mode
+</Info>
+
+---
+
+## Equipment Specifications Display
+
+The app displays equipment specifications with icons:
+
+| Spec | Icon | When Shown |
+|------|------|------------|
+| WiFi | 📶 | Always shown, color based on `wifi` value |
+| Warranty | 🛡️ | Badge shown if warranty contains "3" |
+| Installation Kit | 📦 | Always shown with kit type |
+| Refrigerant | Badge | R32 (green) or R410 (orange) |
+
+These are automatically generated from your equipment data.
+
+---
+
+## Filtering & Search
+
+### Available Filters
+
+Users can filter equipment by:
+
+1. **Text Search** - Searches `marca` and `brand_model`
+2. **Brand Filter** - Dropdown populated from unique `marca` values
+3. **BTU Filter** - Searches within `capacities` array
+4. **Refrigerant Filter** - Filters by `refrigerant` value
+5. **Popularity** - Ranks by quotation frequency
+
+### Search Implementation
+
+From `app.js`:
+
+```javascript app.js
+function filterAC() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const brand = document.getElementById('filterBrand').value;
+  const btu = parseInt(document.getElementById('filterBTU').value) || 0;
+  const ref = document.getElementById('filterRef').value;
+
+  filteredAC = allAC.filter(ac => {
+    const brandName = (ac.marca || '').toLowerCase();
+    const modelName = (ac.brand_model || '').toLowerCase();
+    if (search && !brandName.includes(search) && !modelName.includes(search)) return false;
+    if (brand && (ac.marca || '') !== brand) return false;
+    if (ref && ac.refrigerant !== ref) return false;
+    if (btu && !ac.capacities.find(c => c.btu_capacity === btu)) return false;
+    return true;
+  });
+  
+  renderACGrid();
+}
+```
+
+---
+
+## Accessories
+
+Accessories work similarly to equipment but are stored in the `accessories` node:
+
+```json
+{
+  "accessories": [
+    {
+      "id": "kit_can_9k",
+      "name": "Kit cañería 9K",
+      "desc": "3 metros, incluye aislación",
+      "price": 25000,
+      "categoria": "cañerias",
+      "color": "rgba(26,58,92,0.08)"
+    }
+  ]
+}
+```
+
+### Accessory Fields
+
+<ResponseField name="id" type="string" required>
+  Unique identifier (e.g., `"kit_can_9k"`)
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name shown to users
+</ResponseField>
+
+<ResponseField name="desc" type="string" required>
+  Short description (shown in italics)
+</ResponseField>
+
+<ResponseField name="price" type="number" required>
+  Price with tax included
+</ResponseField>
+
+<ResponseField name="categoria" type="string">
+  Category for grouping (e.g., `"cañerias"`, `"electrico"`, `"instalacion"`)
+</ResponseField>
+
+<ResponseField name="color" type="string">
+  Background color for icon (CSS color value)
+</ResponseField>
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Consistent Naming" icon="tag">
+    Use consistent brand names across all equipment:
+    - ✅ All "LG" entries use `"marca": "LG"`
+    - ❌ Don't mix "LG", "lg", "LG Electronics"
+  </Card>
+  
+  <Card title="Complete Capacities" icon="chart-line">
+    Provide common BTU options for each model:
+    - Standard: 9000, 12000, 18000, 24000
+    - Include net and tax prices for accuracy
+  </Card>
+  
+  <Card title="Accurate Specs" icon="check">
+    Verify equipment specifications:
+    - Correct refrigerant type (R32 vs R410)
+    - Valid warranty period
+    - Actual WiFi capabilities
+  </Card>
+  
+  <Card title="Brand Logos" icon="image">
+    Provide high-quality brand logos:
+    - Use SVG for best scaling
+    - Keep file sizes small (< 50KB)
+    - Test display in equipment cards
+  </Card>
+</CardGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Service Pricing" icon="dollar-sign" href="./service-pricing">
+    Configure installation and maintenance service prices
+  </Card>
+  
+  <Card title="Customization" icon="palette" href="./customization">
+    Customize branding, colors, and PDF appearance
+  </Card>
+</CardGroup>

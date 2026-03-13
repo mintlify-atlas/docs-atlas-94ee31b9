@@ -1,0 +1,378 @@
+---
+title: Client Management
+description: Capture client information with GPS location support and automatic deduplication by RUT
+icon: user
+---
+
+CotizaClima captures comprehensive client information for quotations, including contact details, installation address, and property type. Client data is automatically saved to Firebase and deduplicated by Chilean RUT.
+
+## Client Data Fields
+
+The client form captures the following information:
+
+<Accordion title="Personal Information">
+  - **Full Name** (required): Client's complete name
+  - **RUT**: Chilean national ID (used for deduplication)
+  - **Phone**: Contact phone number
+  - **Email**: Contact email address
+</Accordion>
+
+<Accordion title="Installation Location">
+  - **Address**: Installation street address
+  - **City**: Municipality or city name
+  - **Region**: Chilean region selector (15 regions)
+  - **Property Type**: Casa, Departamento, Oficina, Local comercial, Bodega/Industrial
+</Accordion>
+
+<Accordion title="Additional Notes">
+  - **Client Notes**: Special instructions for access, floor number, parking, etc.
+</Accordion>
+
+## Client Form Interface
+
+```html title="index.html"
+<div class="page" id="page4">
+  <div class="section-title">Datos del cliente</div>
+  
+  <div class="form-group">
+    <label class="form-label">Nombre completo *</label>
+    <input type="text" class="form-input" id="clientName" 
+           placeholder="Ej: Juan Pérez González">
+  </div>
+  
+  <div class="form-row">
+    <div class="form-group">
+      <label class="form-label">RUT</label>
+      <input type="text" class="form-input" id="clientRut" 
+             placeholder="12.345.678-9">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Teléfono</label>
+      <input type="tel" class="form-input" id="clientPhone" 
+             placeholder="+56 9 1234 5678">
+    </div>
+  </div>
+  
+  <div class="form-group">
+    <label class="form-label">Dirección de instalación *</label>
+    <div class="input-inline-action">
+      <input type="text" class="form-input" id="clientAddress" 
+             placeholder="Calle, número, comuna">
+      <button type="button" class="btn btn-gps" 
+              onclick="fillAddressFromGPS()">Usar GPS</button>
+    </div>
+  </div>
+  
+  <div class="form-row">
+    <div class="form-group">
+      <label class="form-label">Ciudad</label>
+      <input type="text" class="form-input" id="clientCity" 
+             placeholder="Ej: Curicó">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Región</label>
+      <select class="form-select-full" id="clientRegion">
+        <option value="">Seleccionar</option>
+        <option value="Arica y Parinacota">Arica y Parinacota</option>
+        <option value="Tarapacá">Tarapacá</option>
+        <option value="Antofagasta">Antofagasta</option>
+        <!-- ... all 15 regions ... -->
+        <option value="Maule" selected>Maule</option>
+      </select>
+    </div>
+  </div>
+  
+  <div class="form-group">
+    <label class="form-label">Tipo de inmueble</label>
+    <select class="form-select-full" id="clientProperty">
+      <option value="Casa">Casa</option>
+      <option value="Departamento">Departamento</option>
+      <option value="Oficina">Oficina</option>
+      <option value="Local comercial">Local comercial</option>
+      <option value="Bodega/Industrial">Bodega/Industrial</option>
+    </select>
+  </div>
+  
+  <div class="form-group">
+    <label class="form-label">Notas adicionales</label>
+    <textarea class="form-textarea" id="clientNotes" 
+              placeholder="Indicaciones especiales, piso, acceso, etc.">
+    </textarea>
+  </div>
+</div>
+```
+
+## GPS Location Feature
+
+Users can auto-fill address and city using GPS:
+
+```javascript {10-19,23-31} title="app.js"
+function fillAddressFromGPS() {
+  if (!navigator.geolocation) {
+    setGpsStatus('GPS no disponible en este navegador', true);
+    return;
+  }
+  
+  setGpsButtonLoading(true);
+  setGpsStatus('Obteniendo ubicación...', false);
+  
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      const { latitude, longitude } = position.coords;
+      
+      try {
+        // Reverse geocoding using Nominatim API
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1`;
+        const res = await fetch(url);
+        const data = await res.json();
+        
+        if (!data || !data.address) throw new Error('No se pudo obtener dirección');
+        
+        const address = data.address;
+        
+        // Fill address field
+        const streetAddress = buildStreetAddressWithFallback(address, data.display_name);
+        document.getElementById('clientAddress').value = streetAddress.value;
+        
+        // Fill city field
+        const city = pickCityFromAddress(address);
+        document.getElementById('clientCity').value = city;
+        
+        // Map region
+        const region = mapRegionFromState(address.state);
+        if (region) document.getElementById('clientRegion').value = region;
+        
+        setGpsStatus('Ubicación obtenida correctamente', false);
+        setGpsButtonLoading(false);
+        
+      } catch (error) {
+        setGpsStatus(`Error: ${error.message}`, true);
+        setGpsButtonLoading(false);
+      }
+    },
+    (error) => {
+      setGpsStatus('No se pudo acceder a tu ubicación', true);
+      setGpsButtonLoading(false);
+    }
+  );
+}
+```
+
+<Warning>
+  GPS requires HTTPS and user permission. The feature gracefully degrades if geolocation is unavailable.
+</Warning>
+
+### Region Mapping
+
+The app maps Chilean regions from OpenStreetMap state names:
+
+```javascript {8-24} title="app.js"
+function mapRegionFromState(stateText) {
+  const state = (stateText || '').toLowerCase();
+  if (!state) return '';
+  
+  const regionAliases = {
+    'Arica y Parinacota': ['arica y parinacota'],
+    'Tarapacá': ['tarapaca'],
+    'Antofagasta': ['antofagasta'],
+    'Atacama': ['atacama'],
+    'Coquimbo': ['coquimbo'],
+    'Valparaíso': ['valparaiso'],
+    'Metropolitana': ['metropolitana', 'santiago'],
+    "O'Higgins": ["o'higgins", 'libertador bernardo ohiggins'],
+    'Maule': ['maule'],
+    'Ñuble': ['nuble'],
+    'Biobío': ['biobio'],
+    'Araucanía': ['araucania', 'la araucania'],
+    'Los Ríos': ['los rios'],
+    'Los Lagos': ['los lagos'],
+    'Aysén': ['aysen'],
+    'Magallanes': ['magallanes']
+  };
+  
+  const stateNormalized = state.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  
+  for (const [region, aliases] of Object.entries(regionAliases)) {
+    if (aliases.some(alias => stateNormalized.includes(alias))) {
+      return region;
+    }
+  }
+  
+  return '';
+}
+```
+
+## Client Snapshot Export
+
+Client data is exported for saving to Firebase:
+
+```javascript title="app.js"
+function getClientSnapshot() {
+  return {
+    name: document.getElementById('clientName').value || '',
+    rut: document.getElementById('clientRut').value || '',
+    phone: document.getElementById('clientPhone').value || '',
+    email: document.getElementById('clientEmail').value || '',
+    address: document.getElementById('clientAddress').value || '',
+    city: document.getElementById('clientCity').value || '',
+    region: document.getElementById('clientRegion').value || '',
+    property: document.getElementById('clientProperty').value || '',
+    notes: document.getElementById('clientNotes').value || ''
+  };
+}
+```
+
+## Client Directory Persistence
+
+Clients are automatically saved to Firebase and deduplicated by RUT:
+
+### RUT Normalization
+
+```javascript {3-4} title="client-repo.js"
+function normalizeRut(rut) {
+  if (!rut || typeof rut !== 'string') return '';
+  // Remove dots and spaces, keep hyphen: "12.345.678-9" → "12345678-9"
+  return rut.replace(/\./g, '').replace(/\s/g, '').toLowerCase().trim();
+}
+
+function resolveClientId(client) {
+  if (!client) return null;
+  const rut = normalizeRut(client.rut || '');
+  // Require at least one digit + hyphen + digit (minimum valid Chilean RUT)
+  if (!rut || !/\d/.test(rut) || rut.length < 3) return null;
+  return rut;
+}
+```
+
+<Info>
+  The normalized RUT (without dots) is used as the Firebase client ID, ensuring each client is stored once.
+</Info>
+
+### Automatic Client Syncing
+
+When a quotation is saved, client data is automatically synced:
+
+```javascript {7-9} title="quote-persistence.js"
+async function persistCurrentQuote(status, options) {
+  // ... save quote ...
+  const result = await window.QuotesRepo.saveQuote(auth.user.uid, auth.idToken, payload, existingId);
+  bridge.setActiveQuoteId(result.id);
+  
+  // Sync client directory in background (fire-and-forget)
+  if (window.ClientRepo && payload.client && payload.client.name) {
+    window.ClientRepo.syncClientForQuote(auth.user.uid, auth.idToken, payload.client, result.id)
+      .catch(function() {});
+  }
+  
+  return result;
+}
+```
+
+### Client Save with Quote Association
+
+```javascript {17-20,26-31} title="client-repo.js"
+async function syncClientForQuote(uid, idToken, clientObject, quoteId) {
+  if (!clientObject || !clientObject.name) return null;
+  const clientId = resolveClientId(clientObject);
+  if (!clientId) return null; // No RUT → skip (can't deduplicate)
+  
+  try {
+    const now = Date.now();
+    
+    // Fetch existing to preserve createdAt and quoteIds
+    let existing = null;
+    try {
+      existing = await request('clients/' + uid + '/' + clientId, idToken, { method: 'GET' });
+    } catch (e) {
+      existing = null;
+    }
+    
+    // Build quoteIds set
+    const quoteIds = Object.assign({}, existing ? (existing.quoteIds || {}) : {});
+    if (quoteId) quoteIds[quoteId] = true;
+    
+    const payload = {
+      name: clientObject.name || '',
+      rut: clientObject.rut || '',
+      rutKey: clientId,
+      phone: clientObject.phone || '',
+      email: clientObject.email || '',
+      address: clientObject.address || '',
+      city: clientObject.city || '',
+      region: clientObject.region || '',
+      property: clientObject.property || '',
+      notes: clientObject.notes || '',
+      createdAt: (existing && existing.createdAt) ? existing.createdAt : now,
+      updatedAt: now,
+      quoteIds: quoteIds
+    };
+    
+    await request('clients/' + uid + '/' + clientId, idToken, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    return clientId;
+  } catch (e) {
+    // Silently fail — background operation must not interrupt user flow
+    return null;
+  }
+}
+```
+
+<Note>
+  Client syncing happens in the background and never interrupts the quotation workflow. Errors are silently caught.
+</Note>
+
+## Client List View
+
+The `clients.html` page displays all saved clients:
+
+```javascript title="client-repo.js"
+async function listClients(uid, idToken) {
+  const raw = await request('clients/' + uid, idToken, { method: 'GET' });
+  if (!raw || typeof raw !== 'object') return [];
+  
+  return Object.entries(raw)
+    .map(function(entry) { 
+      return Object.assign({ id: entry[0] }, entry[1] || {}); 
+    })
+    .sort(function(a, b) { 
+      return (a.name || '').localeCompare(b.name || '', 'es'); 
+    });
+}
+```
+
+## Client Data in Summary
+
+Client information appears in the final quotation summary:
+
+```javascript {6-11} title="app.js"
+function buildSummary() {
+  // Client
+  const name = document.getElementById('clientName').value || '—';
+  const rut = document.getElementById('clientRut').value;
+  const phone = document.getElementById('clientPhone').value || '—';
+  const address = document.getElementById('clientAddress').value || '—';
+  const city = document.getElementById('clientCity').value || '';
+  const region = document.getElementById('clientRegion').value || '';
+  
+  document.getElementById('sumClientName').textContent = name;
+  document.getElementById('sumClientRut').textContent = rut || '—';
+  document.getElementById('sumRutRow').style.display = rut ? 'flex' : 'none';
+  document.getElementById('sumClientPhone').textContent = phone;
+  document.getElementById('sumClientAddress').textContent = `${address}${city?', '+city:''}${region?', '+region:''}`;
+}
+```
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Quotation Wizard" icon="wand-magic-sparkles" href="/features/quotation-wizard">
+    Navigate the full quotation workflow
+  </Card>
+  <Card title="PDF Generation" icon="file-pdf" href="/features/pdf-generation">
+    See how client data appears in PDFs
+  </Card>
+</CardGroup>

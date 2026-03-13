@@ -1,0 +1,848 @@
+---
+title: 'JavaScript Modules'
+description: 'Documentation of all JavaScript modules in CotizaClima'
+icon: 'code'
+---
+
+## Module Architecture
+
+CotizaClima uses **IIFE (Immediately Invoked Function Expressions)** pattern for module encapsulation. Each module exposes a public API through `window` globals.
+
+<Info>
+  All modules are loaded via `<script>` tags in `index.html`. No module bundler is used.
+</Info>
+
+## app.js
+
+**Main application logic** - 1,984 lines
+
+### Purpose
+
+Core business logic for equipment selection, quote building, PDF generation, and UI state management.
+
+### Key Responsibilities
+
+<CardGroup cols={2}>
+  <Card title="Equipment Management" icon="snowflake">
+    Load, filter, and display AC equipment catalog
+  </Card>
+  
+  <Card title="Service Selection" icon="wrench">
+    Handle installation, maintenance, repair services
+  </Card>
+  
+  <Card title="Quote Building" icon="file-invoice">
+    Build complete quote snapshots with pricing
+  </Card>
+  
+  <Card title="PDF Generation" icon="file-pdf">
+    Generate professional PDF quotations client-side
+  </Card>
+</CardGroup>
+
+### State Variables
+
+```javascript app.js:85-104
+let allAC = [];                    // All equipment from Firebase/demo
+let filteredAC = [];               // Filtered equipment for display
+let selectedAC = null;             // Currently selected equipment index
+let selectedBTU = null;            // Currently selected BTU capacity
+let selectedEquipments = {};       // Map of selected equipment
+let selectedService = null;        // Selected service ID
+let accQty = {};                   // Accessories quantity map
+let currentStep = 1;               // Current wizard step (1-5)
+let quoteNumber = '';              // Generated quote number
+let repairQty = 1;                 // Repair service quantity
+let repairUnitValue = 10000;       // Repair unit price
+let instalacionUnitValue = 100000; // Installation unit price
+let mantencionUnitValue = 30000;   // Maintenance unit price
+let serviceQtyMap = { instalacion: 0, mantencion: 0 };
+let activeQuoteId = null;          // Current quote ID in Firebase
+let acRankings = {};               // Equipment popularity rankings
+let sortRankingMode = 0;           // Sort mode
+```
+
+### Core Functions
+
+<AccordionGroup>
+  <Accordion title="Equipment Selection">
+    ```javascript app.js:642-650
+    function selectAC(idx, btu) {
+      const key = equipKey(idx, Number(btu));
+      selectedEquipments[key] = (selectedEquipments[key] || 0) + 1;
+      selectedAC = idx;
+      selectedBTU = btu;
+      updateStep1NextButton();
+      renderACGrid();
+      showToast(`${allAC[idx].brand_model} · ${(btu/1000).toFixed(0)}K (x${selectedEquipments[key]})`, 'success');
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Equipment Filtering">
+    ```javascript app.js:664-694
+    function filterAC() {
+      const search = document.getElementById('searchInput').value.toLowerCase();
+      const brand = document.getElementById('filterBrand').value;
+      const btu = parseInt(document.getElementById('filterBTU').value) || 0;
+      const ref = document.getElementById('filterRef').value;
+    
+      filteredAC = allAC.filter(ac => {
+        const brandName = (ac.marca || '').toLowerCase();
+        const modelName = (ac.brand_model || '').toLowerCase();
+        if (search && !brandName.includes(search) && !modelName.includes(search)) return false;
+        if (brand && (ac.marca || '') !== brand) return false;
+        if (ref && ac.refrigerant !== ref) return false;
+        if (btu && !ac.capacities.find(c => c.btu_capacity === btu)) return false;
+        return true;
+      });
+    
+      if (sortRankingMode !== 2 && window.RankingRepo) {
+        filteredAC.sort((a, b) => {
+          const aCount = acRankings[window.RankingRepo.modelKey(a.brand_model)] || 0;
+          const bCount = acRankings[window.RankingRepo.modelKey(b.brand_model)] || 0;
+          return sortRankingMode === 0 ? bCount - aCount : aCount - bCount;
+        });
+      }
+    
+      renderACGrid();
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Quote Number Generation">
+    ```javascript app.js:440-461
+    async function generateQuoteNumber() {
+      const d = new Date();
+      const datePart = getQuoteDatePart(d);
+    
+      // Fallback inmediato para no dejar la UI sin numero
+      const localNext = readLocalQuoteCounter(datePart) + 1;
+      writeLocalQuoteCounter(datePart, localNext);
+      setQuoteNumberValue(buildQuoteNumber(datePart, localNext));
+    
+      // Si hay sesion + acceso a repo, ajustar al consecutivo real de Firebase
+      try {
+        const firebaseNext = await getNextQuoteSequenceFromFirebase(datePart);
+        if (firebaseNext) {
+          writeLocalQuoteCounter(datePart, firebaseNext);
+          setQuoteNumberValue(buildQuoteNumber(datePart, firebaseNext));
+        }
+      } catch (e) {
+        // Mantiene el consecutivo local cuando Firebase no esta disponible
+      }
+    
+      return quoteNumber;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="PDF Generation">
+    ```javascript app.js:1136-1384
+    async function generatePDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    
+      const pageW = 210, margin = 18;
+      let y = 0;
+    
+      // Header with logo and company info
+      const logoSource = await getPdfLogoSource();
+      if (logoSource) {
+        doc.addImage(logoSource, 'PNG', logoX, logoY, logoSize, logoSize);
+      }
+    
+      // Client section
+      sectionHeader(doc, '  DATOS DEL CLIENTE', margin, y, pageW - margin*2);
+      // ...
+    
+      // Equipment and services table
+      doc.autoTable({
+        head: [['DESCRIPCIÓN', 'TIPO', 'CANT.', 'P. NETO', 'P. c/IVA']],
+        body: tableBody,
+        // ...
+      });
+    
+      // Totals and footer
+      doc.save(`${quoteNumber}.pdf`);
+      showToast('PDF generado correctamente', 'success');
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="GPS Address Autofill">
+    ```javascript app.js:1829-1908
+    async function fillAddressFromGPS() {
+      const addressInput = document.getElementById('clientAddress');
+      const cityInput = document.getElementById('clientCity');
+      const regionSelect = document.getElementById('clientRegion');
+    
+      if (!('geolocation' in navigator)) {
+        setGpsStatus('Tu navegador no soporta geolocalizacion.', true);
+        return;
+      }
+    
+      setGpsButtonLoading(true);
+      setGpsStatus('Solicitando permiso de ubicacion...');
+    
+      try {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 60000
+          });
+        });
+    
+        const { latitude, longitude } = position.coords;
+        const reverseUrl = `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=jsonv2`;
+        const response = await fetch(reverseUrl);
+        const data = await response.json();
+    
+        // Extract and fill address, city, region
+        const streetAddress = buildStreetAddressWithFallback(data.address, data.display_name);
+        if (streetAddress.value) addressInput.value = streetAddress.value;
+        // ...
+    
+        showToast('Ubicacion cargada correctamente', 'success');
+      } catch (error) {
+        showToast('No se pudo autocompletar con GPS', 'error');
+      } finally {
+        setGpsButtonLoading(false);
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Exported Bridge
+
+```javascript app.js:1711-1718
+window.CotizPersistenceBridge = {
+  exportQuoteSnapshot,
+  importQuoteSnapshot,
+  getActiveQuoteId,
+  setActiveQuoteId,
+  getQuoteNumberValue,
+  setQuoteNumberValue
+};
+```
+
+## firebase-auth.js
+
+**Authentication service** - 171 lines
+
+### Purpose
+
+Handles Firebase Authentication using REST API with session-based token management.
+
+### Key Functions
+
+<AccordionGroup>
+  <Accordion title="Sign In">
+    ```javascript firebase-auth.js:96-117
+    async function signIn(email, password) {
+      const data = await authRequest('accounts:signInWithPassword', {
+        email,
+        password,
+        returnSecureToken: true
+      });
+    
+      const nowSec = Math.floor(Date.now() / 1000);
+      const expiresIn = Number(data.expiresIn || 3600);
+      const jwt = parseJwt(data.idToken) || {};
+    
+      const session = {
+        idToken: data.idToken,
+        refreshToken: data.refreshToken,
+        uid: data.localId || jwt.user_id || '',
+        email: data.email || jwt.email || email,
+        expiresAt: nowSec + expiresIn - 30
+      };
+    
+      writeSession(session);
+      return { uid: session.uid, email: session.email };
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Token Refresh">
+    ```javascript firebase-auth.js:61-94
+    async function refreshIdToken(refreshToken) {
+      const apiKey = getApiKey();
+      const endpoint = `https://securetoken.googleapis.com/v1/token?key=${apiKey}`;
+      const form = new URLSearchParams();
+      form.set('grant_type', 'refresh_token');
+      form.set('refresh_token', refreshToken);
+    
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString()
+      });
+    
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error.message);
+    
+      const session = {
+        idToken: data.id_token,
+        refreshToken: data.refresh_token,
+        uid: data.user_id,
+        email: parseJwt(data.id_token).email,
+        expiresAt: Math.floor(Date.now() / 1000) + Number(data.expires_in) - 30
+      };
+    
+      writeSession(session);
+      return session.idToken;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Get Valid Token">
+    ```javascript firebase-auth.js:129-149
+    async function getValidIdToken() {
+      const session = readSession();
+      if (!session || !session.idToken) return null;
+    
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (session.expiresAt && session.expiresAt > nowSec) {
+        return session.idToken; // Token still valid
+      }
+    
+      if (!session.refreshToken) {
+        clearSession();
+        return null;
+      }
+    
+      try {
+        return await refreshIdToken(session.refreshToken);
+      } catch (e) {
+        clearSession();
+        return null;
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Exported API
+
+```javascript firebase-auth.js:162-169
+window.FirebaseAuthService = {
+  signIn,
+  signOut,
+  getCurrentUser,
+  getValidIdToken,
+  mapAuthError,
+  AUTH_STORAGE_KEY
+};
+```
+
+## quotes-repo.js
+
+**Quote repository** - 92 lines
+
+### Purpose
+
+CRUD operations for quotes in Firebase Realtime Database.
+
+### Key Functions
+
+<AccordionGroup>
+  <Accordion title="List Quotes">
+    ```javascript quotes-repo.js:36-43
+    async function listQuotes(uid, idToken) {
+      const raw = await request(`quotes/${uid}`, idToken, { method: 'GET' });
+      if (!raw || typeof raw !== 'object') return [];
+    
+      return Object.entries(raw)
+        .map(([id, payload]) => ({ id, ...(payload || {}) }))
+        .sort((a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0));
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Save Quote">
+    ```javascript quotes-repo.js:51-78
+    async function saveQuote(uid, idToken, quotePayload, quoteId) {
+      const now = Date.now();
+      const basePayload = {
+        ...quotePayload,
+        ownerUid: uid,
+        updatedAt: now,
+        createdAt: quotePayload && quotePayload.createdAt ? quotePayload.createdAt : now
+      };
+    
+      if (quoteId) {
+        // Update existing
+        await request(`quotes/${uid}/${quoteId}`, idToken, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(basePayload)
+        });
+        return { id: quoteId, payload: basePayload };
+      }
+    
+      // Create new
+      const created = await request(`quotes/${uid}`, idToken, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(basePayload)
+      });
+    
+      const id = created && created.name;
+      if (!id) throw new Error('No se pudo crear la cotización');
+      return { id, payload: basePayload };
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Delete Quote">
+    ```javascript quotes-repo.js:80-83
+    async function deleteQuote(uid, idToken, quoteId) {
+      await request(`quotes/${uid}/${quoteId}`, idToken, { method: 'DELETE' });
+      return true;
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Exported API
+
+```javascript quotes-repo.js:85-90
+window.QuotesRepo = {
+  listQuotes,
+  getQuote,
+  saveQuote,
+  deleteQuote
+};
+```
+
+## client-repo.js
+
+**Client directory repository** - 167 lines
+
+### Purpose
+
+Manage client records with RUT-based deduplication and quote association.
+
+### Key Functions
+
+<AccordionGroup>
+  <Accordion title="RUT Normalization">
+    ```javascript client-repo.js:36-41
+    function normalizeRut(rut) {
+      if (!rut || typeof rut !== 'string') return '';
+      return rut.replace(/\./g, '').replace(/\s/g, '').toLowerCase().trim();
+    }
+    ```
+    
+    Example: `"12.345.678-9"` → `"12345678-9"`
+  </Accordion>
+  
+  <Accordion title="Sync Client for Quote">
+    ```javascript client-repo.js:108-156
+    async function syncClientForQuote(uid, idToken, clientObject, quoteId) {
+      if (!clientObject || !clientObject.name) return null;
+      const clientId = resolveClientId(clientObject);
+      if (!clientId) return null; // No RUT → skip
+    
+      try {
+        // Fetch existing client to preserve createdAt and quoteIds
+        let existing = null;
+        try {
+          existing = await request('clients/' + uid + '/' + clientId, idToken, { method: 'GET' });
+        } catch (e) {
+          existing = null;
+        }
+    
+        const quoteIds = Object.assign({}, existing ? (existing.quoteIds || {}) : {});
+        if (quoteId) quoteIds[quoteId] = true;
+    
+        const payload = {
+          name: clientObject.name || '',
+          rut: clientObject.rut || '',
+          rutKey: clientId,
+          phone: clientObject.phone || '',
+          email: clientObject.email || '',
+          address: clientObject.address || '',
+          city: clientObject.city || '',
+          region: clientObject.region || '',
+          property: clientObject.property || '',
+          notes: clientObject.notes || '',
+          createdAt: (existing && existing.createdAt) ? existing.createdAt : Date.now(),
+          updatedAt: Date.now(),
+          quoteIds: quoteIds
+        };
+    
+        await request('clients/' + uid + '/' + clientId, idToken, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+    
+        return clientId;
+      } catch (e) {
+        // Silently fail — background operation
+        return null;
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Exported API
+
+```javascript client-repo.js:158-165
+window.ClientRepo = {
+  normalizeRut,
+  resolveClientId,
+  listClients,
+  saveClientWithId,
+  addQuoteToClient,
+  syncClientForQuote
+};
+```
+
+## ranking-repo.js
+
+**Equipment popularity tracking** - 92 lines
+
+### Purpose
+
+Track which equipment models are quoted most frequently per user.
+
+### Key Functions
+
+<AccordionGroup>
+  <Accordion title="Model Key Generation">
+    ```javascript ranking-repo.js:34-38
+    function modelKey(brandModel) {
+      return (brandModel || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    }
+    ```
+    
+    Example: `"Samsung WindFree 9K"` → `"samsung_windfree_9k"`
+  </Accordion>
+  
+  <Accordion title="Increment Rankings (Atomic)">
+    ```javascript ranking-repo.js:46-72
+    async function incrementAcRankings(uid, idToken, equipmentSelections) {
+      if (!uid || !idToken || !equipmentSelections.length) return;
+    
+      // Deduplicate by brandModel
+      const seen = new Set();
+      const unique = equipmentSelections.filter(item => {
+        const key = modelKey(item.brandModel);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    
+      await Promise.all(unique.map(item => {
+        const key = modelKey(item.brandModel);
+        const body = {
+          marca: item.marca || '',
+          brandModel: item.brandModel || '',
+          count: { '.sv': { increment: 1 } },    // Server-side atomic increment
+          updatedAt: { '.sv': 'timestamp' }
+        };
+        return request('rankings/' + uid + '/' + key, idToken, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      }));
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Get Rankings">
+    ```javascript ranking-repo.js:78-88
+    async function getRankings(uid, idToken) {
+      const raw = await request('rankings/' + uid, idToken, { method: 'GET' });
+      if (!raw || typeof raw !== 'object') return {};
+      
+      const result = {};
+      Object.entries(raw).forEach(([key, val]) => {
+        result[key] = (val && typeof val.count === 'number') ? val.count : 0;
+      });
+      return result;
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Exported API
+
+```javascript ranking-repo.js:90
+window.RankingRepo = {
+  modelKey,
+  incrementAcRankings,
+  getRankings
+};
+```
+
+## quote-persistence.js
+
+**Quote save/load bridge** - 329 lines
+
+### Purpose
+
+Bridge between UI state and Firebase persistence. Handles quote saving, loading, and PDF auto-save.
+
+### Key Functions
+
+<AccordionGroup>
+  <Accordion title="Persist Current Quote">
+    ```javascript quote-persistence.js:35-80
+    async function persistCurrentQuote(status, options) {
+      const opts = options || {};
+      const requireAuth = !!opts.requireAuth;
+      const silent = !!opts.silent;
+    
+      if (!window.QuotesRepo) {
+        if (!silent) showToastSafe('No se pudo guardar: módulo no cargado.', 'error');
+        return null;
+      }
+    
+      const bridge = getBridge();
+      if (!bridge) {
+        if (!silent) showToastSafe('Puente de estado no disponible.', 'error');
+        return null;
+      }
+    
+      try {
+        const auth = await getAuthContext(requireAuth);
+        if (!auth) return null;
+    
+        const existingId = bridge.getActiveQuoteId();
+        const payload = bridge.exportQuoteSnapshot(status || 'draft');
+        const result = await window.QuotesRepo.saveQuote(auth.user.uid, auth.idToken, payload, existingId || null);
+        bridge.setActiveQuoteId(result.id);
+    
+        // Sync client directory in background (fire-and-forget)
+        if (window.ClientRepo && payload.client && payload.client.name) {
+          window.ClientRepo.syncClientForQuote(auth.user.uid, auth.idToken, payload.client, result.id).catch(() => {});
+        }
+    
+        // Sync AC ranking counters in background (fire-and-forget)
+        if (window.RankingRepo && payload.equipmentSelections && payload.equipmentSelections.length) {
+          window.RankingRepo.incrementAcRankings(auth.user.uid, auth.idToken, payload.equipmentSelections).catch(() => {});
+        }
+    
+        if (!silent) {
+          const label = status === 'issued' ? 'emitida' : 'guardada';
+          showToastSafe(`Cotización ${label} correctamente`, 'success');
+        }
+    
+        return result;
+      } catch (e) {
+        if (!silent) showToastSafe(`No se pudo guardar: ${e.message}`, 'error');
+        return null;
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="PDF Auto-Save Patch">
+    ```javascript quote-persistence.js:119-139
+    function patchGeneratePdfForAutosave() {
+      if (typeof window.generatePDF !== 'function') return;
+      if (window.generatePDF.__patchedWithPersistence) return;
+    
+      const original = window.generatePDF;
+      window.generatePDF = async function patchedGeneratePDF() {
+        let saved = null;
+        try {
+          saved = await persistCurrentQuote('issued', { requireAuth: false, silent: true });
+        } catch (e) {
+          saved = null;
+        }
+    
+        await original();
+    
+        if (saved) {
+          showToastSafe('PDF generado y cotización guardada', 'success');
+        }
+      };
+    
+      window.generatePDF.__patchedWithPersistence = true;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Apply Pending Quote">
+    ```javascript quote-persistence.js:99-116
+    function applyPendingQuoteIfAny() {
+      const bridge = getBridge();
+      if (!bridge) return;
+    
+      const payload = readPendingQuote();
+      if (!payload || !payload.quote) return;
+    
+      const originalToast = window.showToast;
+      window.showToast = function() {};  // Suppress toasts during import
+      try {
+        bridge.importQuoteSnapshot(payload.quote);
+      } finally {
+        window.showToast = originalToast;
+        clearPendingQuote();
+      }
+    
+      showToastSafe('Cotización cargada para edición', 'success');
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Exported API
+
+```javascript quote-persistence.js:317-321
+window.saveDraftQuote = saveDraftQuote;
+window.CotizQuotePersistence = {
+  persistCurrentQuote,
+  PENDING_QUOTE_STORAGE_KEY
+};
+```
+
+## quotes.js
+
+**Quote history UI** - 240 lines
+
+### Purpose
+
+Manages the quote history page (`quotes.html`) - list, view, duplicate, delete quotes.
+
+### Key Functions
+
+<AccordionGroup>
+  <Accordion title="Load Quotes">
+    ```javascript quotes.js:140-151
+    async function loadQuotes() {
+      const { user, idToken } = await requireAuthContext();
+      const list = await window.QuotesRepo.listQuotes(user.uid, idToken);
+      const container = $('#quoteList');
+    
+      if (!list.length) {
+        container.innerHTML = '<div class="quote-item">No hay cotizaciones guardadas.</div>';
+        return;
+      }
+    
+      container.innerHTML = list.map(quoteItemTemplate).join('');
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Duplicate Quote">
+    ```javascript quotes.js:160-186
+    async function duplicateQuote(id) {
+      const { user, idToken } = await requireAuthContext();
+      const quote = await window.QuotesRepo.getQuote(user.uid, idToken, id);
+      if (!quote) throw new Error('No se encontró para duplicar.');
+    
+      const targetYear = getQuoteYearFromNumber(quote.quoteNumber);
+      const allQuotes = await window.QuotesRepo.listQuotes(user.uid, idToken);
+      const maxSeq = (allQuotes || []).reduce((max, item) => {
+        const seq = parseQuoteSequenceByYear(item && item.quoteNumber, targetYear);
+        return seq > max ? seq : max;
+      }, 0);
+      const nextQuoteNumber = buildQuoteNumber(targetYear, maxSeq + 1);
+    
+      const clone = {
+        ...quote,
+        id: undefined,
+        activeQuoteId: null,
+        status: 'draft',
+        quoteNumber: nextQuoteNumber,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+    
+      await window.QuotesRepo.saveQuote(user.uid, idToken, clone, null);
+      showStatus('Cotización duplicada.', false);
+      await loadQuotes();
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Navigate to Editor">
+    ```javascript quotes.js:100-103
+    function navigateToEditorWithQuote(quote) {
+      sessionStorage.setItem(PENDING_QUOTE_STORAGE_KEY, JSON.stringify({ quote }));
+      window.location.href = 'index.html';
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Module Loading Order
+
+Modules must be loaded in this order in `index.html`:
+
+```html index.html:480-485
+<script src="firebase-auth.js"></script>
+<script src="quotes-repo.js"></script>
+<script src="client-repo.js"></script>
+<script src="ranking-repo.js"></script>
+<script src="app.js"></script>
+<script src="quote-persistence.js"></script>
+```
+
+<Warning>
+  `quote-persistence.js` must load **after** `app.js` to patch `generatePDF()` and access `CotizPersistenceBridge`.
+</Warning>
+
+## Module Communication Pattern
+
+Modules check for existence before using other modules:
+
+```javascript
+// Pattern used throughout modules
+if (!window.FirebaseAuthService) {
+  // Handle missing module gracefully
+  return;
+}
+
+const user = window.FirebaseAuthService.getCurrentUser();
+```
+
+## Custom Events
+
+App uses custom events for lifecycle hooks:
+
+```javascript app.js:183-184
+window.__cotizAppReady = true;
+document.dispatchEvent(new CustomEvent('cotiz:app-ready'));
+```
+
+```javascript quote-persistence.js:323-327
+if (window.__cotizAppReady) {
+  initPersistenceFeatures();
+} else {
+  document.addEventListener('cotiz:app-ready', initPersistenceFeatures, { once: true });
+}
+```
+
+## Error Handling Philosophy
+
+<CardGroup cols={2}>
+  <Card title="Core Features" icon="circle-check">
+    **Must work offline** - Equipment selection, quote building, PDF generation
+  </Card>
+  
+  <Card title="Enhanced Features" icon="cloud">
+    **Require Firebase** - Quote history, client directory, ranking
+  </Card>
+  
+  <Card title="Background Sync" icon="arrows-rotate">
+    **Fire-and-forget** - Client sync, ranking updates never block UI
+  </Card>
+  
+  <Card title="Graceful Degradation" icon="shield-halved">
+    **Always fallback** - Demo data when Firebase unavailable
+  </Card>
+</CardGroup>

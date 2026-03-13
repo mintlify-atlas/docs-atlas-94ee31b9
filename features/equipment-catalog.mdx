@@ -1,0 +1,353 @@
+---
+title: Equipment Catalog
+description: Browse, filter, and select air conditioning equipment with real-time pricing from Firebase
+icon: snowflake
+---
+
+The equipment catalog allows users to browse air conditioning units with advanced filtering by brand, BTU capacity, and refrigerant type. Equipment data is loaded from Firebase Realtime Database with automatic fallback to demo data.
+
+## Equipment Data Structure
+
+Each air conditioning unit in the catalog contains:
+
+```typescript
+interface AirConditioner {
+  marca: string;              // Brand name (e.g., "LG", "Daitsu")
+  brand_model: string;        // Full model name
+  type: string;               // Unit type (e.g., "Split Muro")
+  refrigerant: "R32" | "R410"; // Refrigerant gas type
+  wifi: "Yes" | "Optional" | "No";
+  warranty: string;           // Warranty period (e.g., "3 años")
+  installation_kit: string;   // Kit type (e.g., "Completo")
+  capacities: Capacity[];     // Available BTU options
+}
+
+interface Capacity {
+  btu_capacity: number;       // BTU value (e.g., 9000, 12000)
+  net_price: number;          // Price without tax
+  price_with_tax: number;     // Final price with IVA
+}
+```
+
+<Note>
+  The `capacities` array allows a single model to have multiple BTU options (e.g., 9K, 12K, 18K), each with its own pricing.
+</Note>
+
+## Firebase Integration
+
+Equipment data is loaded from Firebase Realtime Database:
+
+```javascript {9-14,24-26} title="app.js"
+const FIREBASE_CONNECTION = {
+  databaseURL: 'https://cotizaciones-app-ece65-default-rtdb.firebaseio.com/',
+  node: 'air_conditioners',
+  authToken: ''
+};
+
+async function loadFromFirebase(url, node, authToken = '') {
+  const cleanUrl = url.replace(/\/$/, '');
+  const endpoint = buildFirebaseEndpoint(cleanUrl, node, authToken);
+  
+  try {
+    showFirebaseStatus('connecting');
+    const res = await fetch(endpoint);
+    
+    if (!res.ok) throw new Error(`HTTP ${res.status} — verifica la URL y las reglas de lectura`);
+    
+    const raw = await res.json();
+    if (!raw) throw new Error('El nodo está vacío en Firebase');
+    
+    // Firebase stores arrays as objects {0:{...}, 1:{...}}
+    // Normalize them back to arrays
+    const data = normalizeFirebaseArrays(raw);
+    
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('No se encontraron equipos en el nodo indicado');
+    }
+    
+    allAC = data;
+    filteredAC = [...allAC];
+    renderBrandFilterOptions();
+    renderACGrid();
+    showFirebaseStatus('ok', `${data.length} equipos cargados desde Firebase`);
+    showToast(`${data.length} equipos actualizados`, 'success');
+    
+  } catch(e) {
+    showFirebaseStatus('error', e.message);
+    showToast('Firebase: usando datos demo', 'error');
+    if (!Array.isArray(allAC) || allAC.length === 0) loadDemoData();
+  }
+}
+```
+
+### Firebase Array Normalization
+
+Firebase converts arrays to objects with numeric keys. The app automatically normalizes them:
+
+```javascript {8-17} title="app.js"
+function normalizeFirebaseArrays(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map(normalizeFirebaseArrays);
+  
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    const allNumeric = keys.length > 0 && keys.every(k => /^\d+$/.test(k));
+    
+    if (allNumeric) {
+      // It's an array disguised as an object
+      return keys
+        .sort((a, b) => Number(a) - Number(b))
+        .map(k => normalizeFirebaseArrays(obj[k]));
+    }
+    
+    // It's a normal object — normalize its values recursively
+    const result = {};
+    keys.forEach(k => result[k] = normalizeFirebaseArrays(obj[k]));
+    return result;
+  }
+  
+  return obj;
+}
+```
+
+## Demo Mode Fallback
+
+If Firebase connection fails, the app uses built-in demo data:
+
+```javascript title="app.js"
+function loadDemoData() {
+  allAC = DEMO_DATA;
+  filteredAC = [...allAC];
+  renderBrandFilterOptions();
+  renderACGrid();
+  updateStep1NextButton();
+}
+```
+
+<Warning>
+  Demo mode is indicated by a red status dot in the header. Users can still create quotations, but equipment data won't sync with Firebase.
+</Warning>
+
+## Advanced Filtering
+
+Users can filter equipment by multiple criteria:
+
+### Filter Interface
+
+```html title="index.html"
+<div class="filters-grid">
+  <select class="filter-select" id="filterBrand" onchange="filterAC()">
+    <option value="">Todas las marcas</option>
+  </select>
+  <select class="filter-select" id="filterBTU" onchange="filterAC()">
+    <option value="">Todos los BTU</option>
+    <option value="9000">9.000 BTU</option>
+    <option value="12000">12.000 BTU</option>
+    <option value="18000">18.000 BTU</option>
+    <option value="24000">24.000 BTU</option>
+  </select>
+  <select class="filter-select" id="filterRef" onchange="filterAC()">
+    <option value="">Todo refrigerante</option>
+    <option value="R32">R32</option>
+    <option value="R410">R410</option>
+  </select>
+</div>
+```
+
+### Filter Logic
+
+```javascript {2-7,9-15} title="app.js"
+function filterAC() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const brand = document.getElementById('filterBrand').value;
+  const btu = parseInt(document.getElementById('filterBTU').value) || 0;
+  const ref = document.getElementById('filterRef').value;
+  
+  filteredAC = allAC.filter(ac => {
+    const brandName = (ac.marca || '').toLowerCase();
+    const modelName = (ac.brand_model || '').toLowerCase();
+    
+    if (search && !brandName.includes(search) && !modelName.includes(search)) return false;
+    if (brand && (ac.marca || '') !== brand) return false;
+    if (ref && ac.refrigerant !== ref) return false;
+    if (btu && !ac.capacities.find(c => c.btu_capacity === btu)) return false;
+    
+    return true;
+  });
+  
+  renderACGrid();
+}
+```
+
+<Info>
+  The search box performs case-insensitive matching against both brand name and model name.
+</Info>
+
+## Popularity Ranking
+
+The catalog can sort equipment by popularity (most quoted models):
+
+```javascript {5-11} title="app.js"
+const SORT_MODES = [
+  { label: 'Más cotizados',   icon: 'fa-fire',        active: true  },
+  { label: 'Menos cotizados', icon: 'fa-fire-flame-simple', active: true  },
+  { label: 'Orden original',  icon: 'fa-list',        active: false }
+];
+
+if (sortRankingMode !== 2 && window.RankingRepo) {
+  filteredAC.sort((a, b) => {
+    const aCount = acRankings[window.RankingRepo.modelKey(a.brand_model)] || 0;
+    const bCount = acRankings[window.RankingRepo.modelKey(b.brand_model)] || 0;
+    return sortRankingMode === 0 ? bCount - aCount : aCount - bCount;
+  });
+}
+```
+
+<Tip>
+  Popularity data is stored per-user in Firebase and auto-increments each time a model is added to a quotation.
+</Tip>
+
+## Equipment Card Rendering
+
+Each equipment card displays specs, pricing, and BTU selection buttons:
+
+```javascript {7-9,12-16,28-34} title="app.js"
+function renderACGrid() {
+  const grid = document.getElementById('acGrid');
+  if (filteredAC.length === 0) {
+    grid.innerHTML = `<div class="empty-state">
+      <div class="empty-icon"><i class="fas fa-magnifying-glass"></i></div>
+      <p>No se encontraron equipos con esos filtros.</p>
+    </div>`;
+    return;
+  }
+  
+  grid.innerHTML = filteredAC.map((ac, idx) => {
+    const origIdx = allAC.indexOf(ac);
+    const brand = (ac.marca || '').trim();
+    const brandLogo = renderBrandLogo(brand);
+    const refBadge = ac.refrigerant === 'R32' ? 'badge-r32' : 'badge-r410';
+    const wifiLabel = ac.wifi === 'Yes' ? 'WiFi incluido' : 'WiFi opcional';
+    
+    return `
+    <div class="ac-card ${isSelected ? 'selected' : ''}">
+      <div class="ac-header">
+        <div>
+          <div class="ac-brand-row">${brandLogo}</div>
+          <div class="ac-brand">${ac.brand_model}</div>
+          <div class="ac-type">${ac.type}</div>
+        </div>
+        <span class="ac-badge ${refBadge}">${ac.refrigerant}</span>
+      </div>
+      
+      <div class="btu-label">Capacidad BTU</div>
+      <div class="btu-options">
+        ${ac.capacities.map(c => `
+          <button class="btu-btn" onclick="selectAC(${origIdx}, ${c.btu_capacity})">
+            ${(c.btu_capacity/1000).toFixed(0)}K
+          </button>
+        `).join('')}
+      </div>
+      
+      <div class="ac-specs">
+        <span class="spec-tag" title="${wifiLabel}"><i class="fas fa-wifi"></i></span>
+        <span class="spec-tag" title="Garantía 3 años"><i class="fas fa-shield-halved"></i></span>
+      </div>
+    </div>`;
+  }).join('');
+}
+```
+
+## Brand Logo Display
+
+Brand logos are automatically loaded from the `assets/img/` directory:
+
+```javascript {5-10,14-16} title="app.js"
+const BRAND_ICON_DIR = 'assets/img';
+const BRAND_ICON_EXTENSIONS = ['svg', 'png', 'webp', 'jpg', 'jpeg'];
+
+function getBrandIconCandidates(brand) {
+  const normalized = normalizeBrandKey(brand);
+  if (!normalized) return [];
+  
+  const baseNames = BRAND_ICON_OVERRIDES[normalized] || [normalized];
+  const files = [];
+  
+  baseNames.forEach(base => {
+    BRAND_ICON_EXTENSIONS.forEach(ext => {
+      files.push(`${BRAND_ICON_DIR}/${base}.${ext}`);
+    });
+  });
+  
+  return [...new Set(files)];
+}
+
+function renderBrandLogo(brand) {
+  const candidates = getBrandIconCandidates(brand);
+  if (!candidates.length) return '';
+  
+  return `<img class="ac-brand-logo" src="${candidates[0]}" 
+               alt="${brand}" loading="lazy" 
+               onerror="handleBrandIconError(this)">`;
+}
+```
+
+<Info>
+  If the primary logo file fails to load, the `handleBrandIconError` function automatically tries alternative formats.
+</Info>
+
+## Multi-BTU Selection
+
+Users can select multiple BTU capacities from the same model:
+
+```javascript {3-4,8-10} title="app.js"
+function selectAC(idx, btu) {
+  const key = equipKey(idx, Number(btu));
+  
+  // Increment quantity for this specific BTU option
+  selectedEquipments[key] = (selectedEquipments[key] || 0) + 1;
+  
+  selectedAC = idx;
+  selectedBTU = btu;
+  
+  updateStep1NextButton();
+  renderACGrid();
+  
+  showToast(`${allAC[idx].brand_model} · ${(btu/1000).toFixed(0)}K (x${selectedEquipments[key]})`, 'success');
+}
+
+function equipKey(idx, btu) {
+  return `${idx}__${btu}`;
+}
+```
+
+## Quantity Adjustment
+
+Users can adjust quantities directly on equipment cards:
+
+```javascript title="app.js"
+function changeEquipmentQty(idx, btu, delta) {
+  const key = equipKey(idx, Number(btu));
+  const nextQty = Math.max(0, (selectedEquipments[key] || 0) + delta);
+  
+  if (nextQty === 0) {
+    delete selectedEquipments[key];
+  } else {
+    selectedEquipments[key] = nextQty;
+  }
+  
+  updateStep1NextButton();
+  renderACGrid();
+}
+```
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Quotation Wizard" icon="wand-magic-sparkles" href="/features/quotation-wizard">
+    Step-by-step quotation workflow
+  </Card>
+  <Card title="Service Types" icon="wrench" href="/features/service-types">
+    Configure services for selected equipment
+  </Card>
+</CardGroup>

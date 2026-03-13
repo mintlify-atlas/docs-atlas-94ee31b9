@@ -1,0 +1,456 @@
+---
+title: 'Service Pricing'
+description: 'Configure installation, maintenance, and service pricing for quotes'
+---
+
+## Overview
+
+CotizaClima supports multiple service types with configurable pricing. Services are defined in `app.js` and include installation, maintenance, repair, warranty visits, and more.
+
+---
+
+## Service Types
+
+Services are defined in the `SERVICES` array in `app.js`:
+
+```javascript app.js
+const SERVICES = [
+  { 
+    id: 'instalacion', 
+    name: 'Instalación nueva', 
+    desc: 'Primera instalación del equipo', 
+    price: 100000, 
+    icon: 'fa-hammer' 
+  },
+  { 
+    id: 'mantencion', 
+    name: 'Mantención', 
+    desc: 'Limpieza y revisión general', 
+    price: 30000, 
+    icon: 'fa-screwdriver-wrench' 
+  },
+  { 
+    id: 'cambio', 
+    name: 'Cambio + instalación', 
+    desc: 'Retiro equipo antiguo + nuevo', 
+    price: 120000, 
+    icon: 'fa-arrow-right-arrow-left' 
+  },
+  { 
+    id: 'reparacion', 
+    name: 'Reparación', 
+    desc: 'Diagnóstico y reparación de fallas', 
+    price: 10000, 
+    icon: 'fa-gear' 
+  },
+  { 
+    id: 'garantia', 
+    name: 'Visita garantía', 
+    desc: 'Revisión por garantía vigente', 
+    price: 0, 
+    icon: 'fa-shield' 
+  },
+  { 
+    id: 'presupuesto', 
+    name: 'Solo presupuesto', 
+    desc: 'Cotización sin instalación', 
+    price: 0, 
+    icon: 'fa-clipboard-list' 
+  }
+];
+```
+
+### Service Field Reference
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the service
+  
+  - Used internally for service selection
+  - Must match keys in `SERVICE_PDF_CONTENT` if custom PDF content is defined
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name shown to users in the service selection grid
+</ResponseField>
+
+<ResponseField name="desc" type="string" required>
+  Short description shown below the service name
+</ResponseField>
+
+<ResponseField name="price" type="number" required>
+  Default price for the service (in local currency)
+  
+  - Set to `0` for free services
+  - Users can modify prices before generating PDF
+</ResponseField>
+
+<ResponseField name="icon" type="string" required>
+  Font Awesome icon class (e.g., `'fa-hammer'`, `'fa-gear'`)
+  
+  - Must be a valid Font Awesome 6.5+ icon
+  - Displayed in service cards
+</ResponseField>
+
+---
+
+## Modifying Service Prices
+
+### Default Prices
+
+To change default service prices, edit the `SERVICES` array in `app.js`:
+
+```javascript app.js
+const SERVICES = [
+  { 
+    id: 'instalacion', 
+    name: 'Instalación nueva', 
+    desc: 'Primera instalación del equipo', 
+    price: 150000,  // Changed from 100000 to 150000
+    icon: 'fa-hammer' 
+  },
+  { 
+    id: 'mantencion', 
+    name: 'Mantención', 
+    desc: 'Limpieza y revisión general', 
+    price: 40000,   // Changed from 30000 to 40000
+    icon: 'fa-screwdriver-wrench' 
+  },
+  // ... other services
+];
+```
+
+### Runtime Price Variables
+
+Some services have configurable per-unit values that users can modify in the UI:
+
+```javascript app.js
+// Default price per installation
+let instalacionUnitValue = 100000;
+
+// Default price per maintenance
+let mantencionUnitValue = 30000;
+
+// Default repair diagnostic price
+let repairUnitValue = 10000;
+```
+
+These values can be changed by:
+1. Users in the service selection interface
+2. Importing saved quotes
+3. Modifying the initial values in `app.js`
+
+---
+
+## Service Types Explained
+
+### Multi-Quantity Services
+
+Some services support multiple quantities in a single quote:
+
+<CodeGroup>
+
+```javascript Installation Service
+// Installation can be added multiple times
+// One installation per equipment is automatically suggested
+serviceQtyMap.instalacion = equipmentCount;
+
+// User can adjust quantity and per-installation price
+const total = serviceQtyMap.instalacion * instalacionUnitValue;
+```
+
+```javascript Maintenance Service
+// Maintenance can be added for multiple units
+serviceQtyMap.mantencion = userSelectedQuantity;
+
+// Price calculated as quantity × unit price
+const total = serviceQtyMap.mantencion * mantencionUnitValue;
+```
+
+</CodeGroup>
+
+### Single-Selection Services
+
+Other services are selected once per quote:
+
+```javascript app.js
+// Only one of these can be selected at a time
+selectedService = 'reparacion';  // or 'garantia', 'presupuesto', etc.
+
+// Repair allows custom quantity and unit price
+const repairTotal = repairQty * repairUnitValue;
+```
+
+---
+
+## PDF Content Configuration
+
+Each service can have custom content displayed in the PDF quote. This is configured in `SERVICE_PDF_CONTENT`:
+
+```javascript app.js
+const SERVICE_PDF_CONTENT = {
+  instalacion: {
+    title: 'Instalación de Aire Acondicionado',
+    relevant: [
+      'Agradecemos la confianza depositada en RefriPro.',
+      'La presente cotización considera la instalación de equipo de aire acondicionado tipo Split, realizada bajo criterios técnicos y buenas prácticas de climatización para asegurar un funcionamiento seguro y eficiente.',
+      'El servicio incluye instalación de unidad interior y exterior, conexión de cañerías de refrigeración, conexión eléctrica básica, drenaje de condensado y puesta en marcha del equipo, verificando su correcto funcionamiento.'
+    ],
+    extra: [
+      'La instalación considera condiciones estándar, incluyendo hasta 3 metros de interconexión (cañerías, cableado y drenaje) entre unidades.',
+      'Trabajos adicionales como mayor distancia de cañería, canaletas o soportes especiales serán informados y cotizados previamente.',
+      'El cliente debe contar con punto eléctrico operativo y acceso adecuado al lugar de instalación.',
+      'La instalación cuenta con 1 año de garantía por el trabajo realizado por RefriPro.'
+    ]
+  },
+  
+  mantencion: {
+    title: 'Mantención Preventiva',
+    relevant: [
+      'Agradecemos la confianza depositada en RefriPro.',
+      'La presente cotización considera la mantención preventiva de equipos de aire acondicionado, orientada a mejorar el rendimiento del sistema, prolongar su vida útil y prevenir fallas futuras.',
+      'El servicio incluye limpieza de filtros, limpieza de evaporador y condensador, revisión de parámetros eléctricos, verificación de presiones de trabajo y chequeo general de funcionamiento, además de recomendaciones técnicas para el correcto uso del equipo.'
+    ],
+    extra: [
+      'El servicio corresponde a mantención preventiva, incluyendo limpieza y revisión general del equipo.',
+      'La mantención no incluye reparaciones ni repuestos en caso de detectarse fallas.',
+      'Si durante la revisión se detecta alguna anomalía, se informará y cotizará previamente antes de realizar cualquier reparación.',
+      'La garantía del servicio es de 30 días, aplicable únicamente al trabajo realizado.'
+    ]
+  },
+  
+  reparacion: {
+    title: 'Reparación / Diagnóstico',
+    relevant: [
+      'Agradecemos la confianza depositada en RefriPro.',
+      'La presente cotización considera la revisión y diagnóstico técnico del equipo de aire acondicionado, con el objetivo de identificar la causa de la falla y determinar la solución más adecuada.',
+      'Durante la intervención se realizará una evaluación general del sistema, revisión de componentes eléctricos, verificación de presiones de refrigerante y pruebas de funcionamiento para determinar el origen del problema.'
+    ],
+    extra: [
+      'El servicio considera diagnóstico técnico y revisión general del equipo.',
+      'El diagnóstico no incluye repuestos ni reparaciones, los cuales serán cotizados en caso de ser necesarios.',
+      'El cliente será informado del estado del equipo y de la solución recomendada antes de realizar cualquier reparación.',
+      'Las reparaciones realizadas cuentan con garantía limitada al trabajo efectuado.'
+    ]
+  }
+};
+```
+
+### PDF Content Structure
+
+<ResponseField name="title" type="string" required>
+  Section title displayed in the PDF
+  
+  - Shown in bold uppercase in the PDF header
+  - Example: `"Instalación de Aire Acondicionado"`
+</ResponseField>
+
+<ResponseField name="relevant" type="array<string>" required>
+  Array of relevant information paragraphs
+  
+  - Displayed under **"Información relevante"** section
+  - Each string is a paragraph
+  - Use for service description, scope, and what's included
+</ResponseField>
+
+<ResponseField name="extra" type="array<string>" required>
+  Array of additional information items
+  
+  - Displayed under **"Información extra"** section
+  - Each string is shown as a bullet point
+  - Use for limitations, conditions, warranties
+</ResponseField>
+
+---
+
+## Customizing PDF Service Content
+
+### Adding a New Service with PDF Content
+
+<Steps>
+  <Step title="Add Service to SERVICES Array">
+    ```javascript app.js
+    const SERVICES = [
+      // ... existing services
+      { 
+        id: 'carga_gas', 
+        name: 'Carga de gas refrigerante', 
+        desc: 'Recarga completa del sistema', 
+        price: 45000, 
+        icon: 'fa-temperature-low' 
+      }
+    ];
+    ```
+  </Step>
+
+  <Step title="Add PDF Content">
+    ```javascript app.js
+    const SERVICE_PDF_CONTENT = {
+      // ... existing services
+      carga_gas: {
+        title: 'Carga de Gas Refrigerante',
+        relevant: [
+          'Servicio de recarga de gas refrigerante para equipos de aire acondicionado.',
+          'Se realizará evacuación del sistema, verificación de fugas y carga según especificaciones del fabricante.',
+          'El servicio incluye pruebas de presión y verificación de funcionamiento óptimo.'
+        ],
+        extra: [
+          'El precio considera gas refrigerante R410 o R32 según modelo del equipo.',
+          'Se debe verificar que no existan fugas previo a la carga.',
+          'Si se detectan fugas, estas deben repararse antes de proceder con la carga.',
+          'Servicio con garantía de 60 días.'
+        ]
+      }
+    };
+    ```
+  </Step>
+
+  <Step title="Test the Service">
+    1. Reload the app
+    2. Select the new service
+    3. Complete a quote and generate PDF
+    4. Verify the service content appears correctly
+  </Step>
+</Steps>
+
+---
+
+## Service Selection Logic
+
+### Multi-Service Mode
+
+Installation and maintenance can be added multiple times:
+
+```javascript app.js
+function isMultiService(id) {
+  return id === 'instalacion' || id === 'mantencion';
+}
+
+// Users can select quantity and price per unit
+if (isMultiService(serviceId)) {
+  serviceQtyMap[serviceId] = (serviceQtyMap[serviceId] || 0) + 1;
+  const total = serviceQtyMap[serviceId] * unitPrice;
+}
+```
+
+### Installation Auto-Suggestion
+
+The app automatically suggests installations based on equipment count:
+
+```javascript app.js
+function preloadInstallationsFromEquipment() {
+  const equipCount = getEquipCount();
+  if (equipCount === 0) {
+    serviceQtyMap.instalacion = 0;
+  } else if ((serviceQtyMap.instalacion || 0) === 0) {
+    // Auto-suggest 1 installation per equipment
+    serviceQtyMap.instalacion = equipCount;
+  }
+}
+```
+
+---
+
+## Service Notes
+
+Users can add custom notes for each service:
+
+```html index.html
+<textarea 
+  class="form-textarea" 
+  id="serviceNotes" 
+  placeholder="Describe condiciones especiales, metros de cañería, acceso al lugar, etc."
+></textarea>
+```
+
+These notes:
+- Appear in the summary page
+- Are included in the PDF quote
+- Help document special conditions or requirements
+
+---
+
+## Price Calculations
+
+### Equipment + Services Total
+
+```javascript app.js
+function calculateQuoteTotal() {
+  // Equipment total
+  const equipTotal = getSelectedEquipmentItems()
+    .reduce((sum, item) => sum + (item.cap.price_with_tax * item.qty), 0);
+  
+  // Services total
+  const servicesTotal = getSelectedServiceItems()
+    .reduce((sum, item) => sum + item.totalPrice, 0);
+  
+  // Accessories total
+  let accessoriesTotal = 0;
+  ACCESSORIES.forEach(acc => {
+    accessoriesTotal += (accQty[acc.id] || 0) * acc.price;
+  });
+  
+  // Subtotal before discount
+  const subtotal = equipTotal + servicesTotal + accessoriesTotal;
+  
+  // Apply discount
+  const discountPct = parseFloat(document.getElementById('discountPct').value) || 0;
+  const discountAmt = subtotal * discountPct / 100;
+  
+  // Final total
+  const total = subtotal - discountAmt;
+  
+  return Math.round(total);
+}
+```
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Realistic Pricing" icon="dollar-sign">
+    Set default prices that reflect your actual costs:
+    - Research market rates
+    - Include labor and materials
+    - Consider travel costs
+    - Update regularly
+  </Card>
+  
+  <Card title="Clear Descriptions" icon="file-lines">
+    Write clear service descriptions:
+    - What's included
+    - What's NOT included
+    - Standard conditions
+    - Warranty terms
+  </Card>
+  
+  <Card title="PDF Content" icon="file-pdf">
+    Provide detailed PDF content:
+    - Professional language
+    - Clear scope of work
+    - Terms and conditions
+    - Liability limitations
+  </Card>
+  
+  <Card title="Flexibility" icon="sliders">
+    Allow price adjustments:
+    - Users can modify prices
+    - Quantity controls available
+    - Custom notes supported
+    - Discount options
+  </Card>
+</CardGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Equipment Data" icon="snowflake" href="./equipment-data">
+    Configure your equipment catalog and pricing
+  </Card>
+  
+  <Card title="Customization" icon="palette" href="./customization">
+    Customize branding, colors, and company information
+  </Card>
+</CardGroup>

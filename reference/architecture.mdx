@@ -1,0 +1,339 @@
+---
+title: 'Application Architecture'
+description: 'Overall architecture and design of CotizaClima'
+icon: 'diagram-project'
+---
+
+## Overview
+
+CotizaClima is a **static web application** for generating professional air conditioning quotations. It runs entirely in the browser with no backend server, using Firebase Realtime Database for data persistence and authentication.
+
+<Info>
+  The application is designed to work offline with demo data and gracefully enhance functionality when Firebase is available.
+</Info>
+
+## Architecture Pattern
+
+### Static Frontend Only
+
+The application follows a **pure client-side architecture**:
+
+- **No backend server** - All logic runs in the browser
+- **Static file hosting** - Can be deployed to any static host (GitHub Pages, Netlify, etc.)
+- **Firebase as BaaS** - Uses Firebase Realtime Database as Backend-as-a-Service
+- **Progressive enhancement** - Works with demo data when offline, syncs when online
+
+### Key Architectural Decisions
+
+<CardGroup cols={2}>
+  <Card title="Zero Server Dependencies" icon="server">
+    No Node.js, PHP, or any server-side runtime required. Pure HTML/CSS/JavaScript.
+  </Card>
+  
+  <Card title="Session-Based Auth" icon="lock">
+    Firebase authentication tokens stored in `sessionStorage` for temporary access.
+  </Card>
+  
+  <Card title="Fallback-First Design" icon="triangle-exclamation">
+    Always provides demo data as fallback when Firebase connection fails.
+  </Card>
+  
+  <Card title="Modular JavaScript" icon="puzzle-piece">
+    Self-contained IIFE modules that communicate through window globals.
+  </Card>
+</CardGroup>
+
+## Application Flow
+
+<Steps>
+  <Step title="Initialization">
+    On page load, `app.js` initializes the application:
+    
+    ```javascript app.js:160-187
+    async function init() {
+      try { await generateQuoteNumber(); } catch(e) {}
+      try { renderAccGrid(); } catch(e) {}
+      try { renderServiceGrid(); } catch(e) {}
+      try { updateMultiServiceInputs(); } catch(e) {}
+      try { updateStep2NextButton(); } catch(e) {}
+    
+      // Priorizar Firebase fijo en codigo. Si no hay config o falla, usar demo.
+      const activeUrl = FIREBASE_CONNECTION.databaseURL;
+      const activeNode = FIREBASE_CONNECTION.node || 'air_conditioners';
+      const activeToken = FIREBASE_CONNECTION.authToken || '';
+    
+      if (activeUrl) {
+        // Carga equipos y accesorios en paralelo desde Firebase
+        await Promise.all([
+          loadFromFirebase(activeUrl, activeNode, activeToken),
+          loadAccessoriesFromFirebase(activeUrl, activeToken)
+        ]);
+      } else {
+        loadDemoData();
+        showFirebaseStatus('error', 'Sin Firebase configurado — usando datos demo');
+      }
+    
+      window.__cotizAppReady = true;
+      document.dispatchEvent(new CustomEvent('cotiz:app-ready'));
+    }
+    ```
+  </Step>
+  
+  <Step title="Data Loading">
+    Equipment and accessories load from Firebase or fall back to demo data:
+    
+    ```javascript app.js:237-272
+    async function loadFromFirebase(url, node, authToken = '') {
+      const cleanUrl = url.replace(/\/$/, '');
+      const endpoint = buildFirebaseEndpoint(cleanUrl, node, authToken);
+    
+      try {
+        showFirebaseStatus('connecting');
+        const res = await fetch(endpoint);
+    
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
+        const raw = await res.json();
+        if (!raw) throw new Error('El nodo está vacío en Firebase');
+    
+        const data = normalizeFirebaseArrays(raw);
+    
+        if (!Array.isArray(data) || data.length === 0) {
+          throw new Error('No se encontraron equipos en el nodo indicado');
+        }
+    
+        allAC = data;
+        filteredAC = [...allAC];
+        renderBrandFilterOptions();
+        renderACGrid();
+        updateStep1NextButton();
+        showFirebaseStatus('ok', `${data.length} equipos cargados desde Firebase`);
+        showToast(`${data.length} equipos actualizados`, 'success');
+    
+      } catch(e) {
+        showFirebaseStatus('error', e.message);
+        showToast('Firebase: usando datos demo', 'error');
+        if (!Array.isArray(allAC) || allAC.length === 0) loadDemoData();
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="User Interaction">
+    User selects equipment, services, and enters client data through a 5-step wizard interface.
+  </Step>
+  
+  <Step title="Quote Generation">
+    The app generates a PDF quotation using jsPDF library client-side:
+    
+    ```javascript app.js:1136-1138
+    async function generatePDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      // ... PDF generation logic
+    }
+    ```
+  </Step>
+  
+  <Step title="Persistence (Optional)">
+    If authenticated, quotes are saved to Firebase Realtime Database for history.
+  </Step>
+</Steps>
+
+## File Structure
+
+```plaintext
+/
+├── index.html              # Main app entry point
+├── quotes.html             # Quote history page
+├── clients.html            # Client directory page
+├── styles.css              # Application styles
+├── app.js                  # Main application logic (1984 lines)
+├── firebase-auth.js        # Authentication service
+├── quotes-repo.js          # Quote persistence
+├── client-repo.js          # Client directory
+├── ranking-repo.js         # Equipment popularity tracking
+├── quote-persistence.js    # Quote save/load bridge
+└── assets/
+    └── img/                # Brand logos
+```
+
+## State Management
+
+### Global State Variables
+
+The application uses simple global variables for state management:
+
+```javascript app.js:85-104
+let allAC = [];                    // All equipment from Firebase/demo
+let filteredAC = [];               // Filtered equipment for display
+let selectedAC = null;             // Currently selected equipment index
+let selectedBTU = null;            // Currently selected BTU capacity
+let selectedEquipments = {};       // Map of selected equipment {"idx__btu": qty}
+let selectedService = null;        // Selected service ID
+let accQty = {};                   // Accessories quantity map
+let currentStep = 1;               // Current wizard step (1-5)
+window.currentStep = currentStep;
+let quoteNumber = '';              // Generated quote number
+let toastTimer = null;             // Toast notification timer
+let repairQty = 1;                 // Repair service quantity
+let repairUnitValue = 10000;       // Repair unit price
+let instalacionUnitValue = 100000; // Installation unit price
+let mantencionUnitValue = 30000;   // Maintenance unit price
+let serviceQtyMap = { instalacion: 0, mantencion: 0 };
+let activeQuoteId = null;          // Current quote ID in Firebase
+let acRankings = {};               // Equipment popularity rankings
+let sortRankingMode = 0;           // Sort mode: 0=popular, 1=unpopular, 2=original
+```
+
+<Warning>
+  Global state is intentional for simplicity. For a larger app, consider using a state management library.
+</Warning>
+
+## Module Communication
+
+Modules communicate through **window globals** using IIFE pattern:
+
+```javascript firebase-auth.js:162-169
+window.FirebaseAuthService = {
+  signIn,
+  signOut,
+  getCurrentUser,
+  getValidIdToken,
+  mapAuthError,
+  AUTH_STORAGE_KEY
+};
+```
+
+```javascript quotes-repo.js:85-90
+window.QuotesRepo = {
+  listQuotes,
+  getQuote,
+  saveQuote,
+  deleteQuote
+};
+```
+
+Modules check for existence before using:
+
+```javascript quote-persistence.js:18-23
+async function getAuthContext(requireAuth) {
+  if (!window.FirebaseAuthService) {
+    if (requireAuth) throw new Error('Módulo de autenticación no disponible.');
+    return null;
+  }
+  // ...
+}
+```
+
+## Error Handling Strategy
+
+### Graceful Degradation
+
+All Firebase operations are wrapped in try-catch with fallbacks:
+
+```javascript app.js:267-271
+catch(e) {
+  showFirebaseStatus('error', e.message);
+  showToast('Firebase: usando datos demo', 'error');
+  if (!Array.isArray(allAC) || allAC.length === 0) loadDemoData();
+}
+```
+
+### Fire-and-Forget Background Operations
+
+Non-critical operations like ranking updates don't block user flow:
+
+```javascript quote-persistence.js:65-68
+// Sync AC ranking counters in background (fire-and-forget)
+if (window.RankingRepo && payload.equipmentSelections && payload.equipmentSelections.length) {
+  window.RankingRepo.incrementAcRankings(auth.user.uid, auth.idToken, payload.equipmentSelections).catch(function() {});
+}
+```
+
+## Deployment
+
+### Requirements
+
+- **Static file hosting** (GitHub Pages, Netlify, Vercel, etc.)
+- **HTTPS** (required for geolocation API)
+- **Firebase project** (optional, for data persistence)
+
+### Configuration
+
+Firebase connection is configured in code:
+
+```javascript app.js:64-68
+const FIREBASE_CONNECTION = {
+  databaseURL: 'https://cotizaciones-app-ece65-default-rtdb.firebaseio.com/',
+  node: 'air_conditioners',
+  authToken: '' // Optional: token/secret if rules require auth
+};
+```
+
+```javascript firebase-auth.js:4-6
+const FIREBASE_AUTH_CONFIG = {
+  apiKey: 'AIzaSyAIvIig9S0bQPYDf_eilrPB7lWbiWPy9EU'
+};
+```
+
+<Tip>
+  To deploy your own instance, simply replace the Firebase configuration with your own project credentials.
+</Tip>
+
+## Performance Optimizations
+
+### Parallel Data Loading
+
+```javascript app.js:174-177
+await Promise.all([
+  loadFromFirebase(activeUrl, activeNode, activeToken),
+  loadAccessoriesFromFirebase(activeUrl, activeToken)
+]);
+```
+
+### Lazy Image Loading
+
+```javascript app.js:521
+<img class="ac-brand-logo" src="${candidates[0]}" alt="${brand}" loading="lazy">
+```
+
+### Debounced Wizard Navigation
+
+```javascript index.html:466
+setInterval(updateWizardNav, 300); // Poll every 300ms
+```
+
+## Security Considerations
+
+<CardGroup cols={2}>
+  <Card title="Client-Side Only" icon="shield-halved">
+    All business logic is visible to users. Don't store secrets in code.
+  </Card>
+  
+  <Card title="Firebase Rules" icon="database">
+    Use Firebase security rules to protect data. Client auth tokens can be inspected.
+  </Card>
+  
+  <Card title="Session Storage" icon="hourglass">
+    Auth tokens expire and are cleared on browser close for security.
+  </Card>
+  
+  <Card title="HTTPS Required" icon="lock">
+    Geolocation and other browser APIs require secure context.
+  </Card>
+</CardGroup>
+
+## Browser Compatibility
+
+The app uses modern JavaScript features:
+
+- **ES6+ syntax** (async/await, arrow functions, template literals)
+- **Fetch API** for HTTP requests
+- **LocalStorage/SessionStorage** for persistence
+- **Geolocation API** for address autofill
+- **Custom Events** for module communication
+
+<Info>
+  Tested on Chrome, Firefox, Safari, and Edge. IE11 is not supported.
+</Info>

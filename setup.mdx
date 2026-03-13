@@ -1,0 +1,917 @@
+---
+title: "Setup & Installation"
+description: "Deploy CotizaClima, configure Firebase connection, and customize your equipment catalog"
+---
+
+## Overview
+
+CotizaClima is a standalone web application that runs entirely in the browser. It works in **demo mode** by default and can optionally connect to Firebase Realtime Database for:
+
+- Equipment catalog synchronization
+- Quote history storage
+- Client database management
+- Usage analytics and rankings
+
+## Quick Start (Demo Mode)
+
+The fastest way to test CotizaClima:
+
+<Steps>
+  <Step title="Download Source Files">
+    Copy all files from the `/source` directory to your web server or local folder:
+    
+    ```bash
+    source/
+    ├── index.html              # Main application
+    ├── app.js                  # Core logic
+    ├── firebase-auth.js        # Authentication service
+    ├── quotes-repo.js          # Quote persistence
+    ├── client-repo.js          # Client management
+    ├── ranking-repo.js         # Analytics
+    ├── quote-persistence.js    # Local storage
+    ├── styles.css              # Styling
+    └── assets/
+        └── img/                # Brand logos
+    ```
+  </Step>
+
+  <Step title="Open in Browser">
+    Open `index.html` in any modern web browser:
+    
+    ```bash
+    # Local file
+    open index.html
+    
+    # Or serve with a local server
+    python3 -m http.server 8000
+    # Visit: http://localhost:8000
+    ```
+    
+    <Note>
+      The app works immediately with built-in demo data. No configuration required for testing.
+    </Note>
+  </Step>
+
+  <Step title="Check Connection Status">
+    Look at the top-right corner of the application:
+    
+    - **Green dot**: Connected to Firebase, live data loaded
+    - **Yellow dot**: Connecting to Firebase...
+    - **Gray/Red dot**: Demo mode, using fallback data
+    
+    Hover over the dot to see the detailed status message.
+  </Step>
+</Steps>
+
+## Firebase Configuration
+
+To enable cloud features, configure Firebase Realtime Database connection.
+
+### Prerequisites
+
+<Steps>
+  <Step title="Create Firebase Project">
+    1. Go to [Firebase Console](https://console.firebase.google.com/)
+    2. Click **"Add project"** or select existing project
+    3. Enable **Realtime Database** from the Build menu
+    4. Choose a database location (e.g., `us-central1`)
+  </Step>
+
+  <Step title="Configure Database Rules">
+    Set read/write permissions in Firebase Console:
+    
+    <Tabs>
+      <Tab title="Public Read (Recommended for testing)">
+        ```json Database Rules
+        {
+          "rules": {
+            "air_conditioners": {
+              ".read": true,
+              ".write": false
+            },
+            "accessories": {
+              ".read": true,
+              ".write": false
+            },
+            "quotes": {
+              ".read": "auth != null",
+              ".write": "auth != null"
+            },
+            "clients": {
+              ".read": "auth != null",
+              ".write": "auth != null"
+            },
+            "rankings": {
+              ".read": "auth != null",
+              ".write": "auth != null"
+            }
+          }
+        }
+        ```
+        
+        This allows:
+        - Public read access to equipment and accessories
+        - Authenticated access for quotes, clients, rankings
+      </Tab>
+
+      <Tab title="Authenticated Read (Production)">
+        ```json Database Rules
+        {
+          "rules": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        }
+        ```
+        
+        Requires authentication for all data access.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Get Database URL">
+    Copy your Firebase Realtime Database URL:
+    
+    ```
+    Format: https://YOUR-PROJECT-ID-default-rtdb.firebaseio.com/
+    Example: https://cotizaciones-app-ece65-default-rtdb.firebaseio.com/
+    ```
+    
+    Found in: **Firebase Console → Realtime Database → Data tab (top of page)**
+  </Step>
+</Steps>
+
+### Configure Connection in Code
+
+Edit the `FIREBASE_CONNECTION` object in `app.js`:
+
+```javascript app.js (lines 64-68)
+const FIREBASE_CONNECTION = {
+  databaseURL: 'https://YOUR-PROJECT-ID-default-rtdb.firebaseio.com/', 
+  node: 'air_conditioners',  // Root node for equipment data
+  authToken: ''              // Optional: database secret for server-side
+};
+```
+
+<ParamField path="databaseURL" type="string" required>
+  Your Firebase Realtime Database URL. Leave empty for demo mode.
+  
+  **Example**: `https://cotizaciones-app-ece65-default-rtdb.firebaseio.com/`
+</ParamField>
+
+<ParamField path="node" type="string" default="air_conditioners">
+  Database node containing the equipment array.
+  
+  **Default**: `air_conditioners`
+</ParamField>
+
+<ParamField path="authToken" type="string">
+  Optional database secret for authenticated REST API access. 
+  
+  **Note**: Only needed if database rules require authentication for reads.
+</ParamField>
+
+### How Connection Works
+
+<CodeGroup>
+```javascript Initialization Logic (app.js:160-186)
+async function init() {
+  try { await generateQuoteNumber(); } catch(e) {}
+  try { renderAccGrid(); } catch(e) {}
+  try { renderServiceGrid(); } catch(e) {}
+  try { updateMultiServiceInputs(); } catch(e) {}
+  try { updateStep2NextButton(); } catch(e) {}
+
+  // Prioritize Firebase connection defined in code
+  const activeUrl = FIREBASE_CONNECTION.databaseURL;
+  const activeNode = FIREBASE_CONNECTION.node || 'air_conditioners';
+  const activeToken = FIREBASE_CONNECTION.authToken || '';
+
+  if (activeUrl) {
+    // Load equipment and accessories in parallel from Firebase
+    await Promise.all([
+      loadFromFirebase(activeUrl, activeNode, activeToken),
+      loadAccessoriesFromFirebase(activeUrl, activeToken)
+    ]);
+  } else {
+    loadDemoData();
+    showFirebaseStatus('error', 'Sin Firebase configurado — usando datos demo');
+  }
+
+  window.__cotizAppReady = true;
+  document.dispatchEvent(new CustomEvent('cotiz:app-ready'));
+  updateSortBtn();
+  loadRankings().then(() => { if (Object.keys(acRankings).length > 0) filterAC(); });
+}
+```
+
+```javascript Firebase Data Loading (app.js:237-272)
+async function loadFromFirebase(url, node, authToken = '') {
+  const cleanUrl = url.replace(/\/$/, ''); // Remove trailing slash
+  const endpoint = buildFirebaseEndpoint(cleanUrl, node, authToken);
+
+  try {
+    showFirebaseStatus('connecting');
+    const res = await fetch(endpoint);
+
+    if (!res.ok) throw new Error(`HTTP ${res.status} — verifica la URL y las reglas de lectura`);
+
+    const raw = await res.json();
+
+    if (!raw) throw new Error('El nodo está vacío en Firebase');
+
+    // Firebase stores arrays as numeric objects {0:{...}, 1:{...}}
+    // This function normalizes them back to arrays
+    const data = normalizeFirebaseArrays(raw);
+
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('No se encontraron equipos en el nodo indicado');
+    }
+
+    allAC = data;
+    filteredAC = [...allAC];
+    renderBrandFilterOptions();
+    renderACGrid();
+    updateStep1NextButton();
+    showFirebaseStatus('ok', `${data.length} equipos cargados desde Firebase`);
+    showToast(`${data.length} equipos actualizados`, 'success');
+
+  } catch(e) {
+    showFirebaseStatus('error', e.message);
+    showToast('Firebase: usando datos demo', 'error');
+    if (!Array.isArray(allAC) || allAC.length === 0) loadDemoData();
+  }
+}
+```
+</CodeGroup>
+
+**Connection behavior:**
+
+1. **If `databaseURL` is set**: Attempts to load from Firebase
+   - Success: Equipment catalog synced from cloud
+   - Failure: Falls back to demo data
+
+2. **If `databaseURL` is empty**: Uses demo data immediately
+   - Status indicator shows "Sin conexión Firebase"
+   - All features work with built-in sample equipment
+
+<Warning>
+  The app **gracefully degrades** to demo mode if Firebase connection fails. Users can always create quotes, even without cloud connectivity.
+</Warning>
+
+## Equipment Catalog
+
+### Database Structure
+
+Equipment data must be stored as an array in Firebase:
+
+```json Database Structure
+{
+  "air_conditioners": [
+    {
+      "marca": "Midea",
+      "brand_model": "Mission Pro Inverter",
+      "type": "Split Muro",
+      "refrigerant": "R32",
+      "wifi": "Optional",
+      "warranty": "1 año compresor y partes",
+      "installation_kit": "incluido",
+      "capacities": [
+        {
+          "btu_capacity": 9000,
+          "net_price": 150000,
+          "price_with_tax": 178500
+        },
+        {
+          "btu_capacity": 12000,
+          "net_price": 180000,
+          "price_with_tax": 214200
+        }
+      ]
+    },
+    {
+      "marca": "LG",
+      "brand_model": "Dual Inverter",
+      "type": "Split Muro",
+      "refrigerant": "R410",
+      "wifi": "Yes",
+      "warranty": "3 años compresor, 1 año partes",
+      "installation_kit": "incluido",
+      "capacities": [
+        {
+          "btu_capacity": 12000,
+          "net_price": 250000,
+          "price_with_tax": 297500
+        },
+        {
+          "btu_capacity": 18000,
+          "net_price": 350000,
+          "price_with_tax": 416500
+        }
+      ]
+    }
+  ]
+}
+```
+
+<Note>
+  Firebase REST API automatically converts arrays to objects with numeric keys when importing JSON. CotizaClima's `normalizeFirebaseArrays()` function handles this conversion automatically.
+</Note>
+
+### Equipment Schema
+
+<ResponseField name="marca" type="string" required>
+  Brand name (e.g., "Midea", "LG", "Samsung")
+</ResponseField>
+
+<ResponseField name="brand_model" type="string" required>
+  Model name/identifier (e.g., "Mission Pro Inverter")
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Equipment type (e.g., "Split Muro", "Mini Split", "Cassette")
+</ResponseField>
+
+<ResponseField name="refrigerant" type="string" required>
+  Refrigerant type: `"R32"` or `"R410"`
+</ResponseField>
+
+<ResponseField name="wifi" type="string" required>
+  WiFi capability: `"Yes"`, `"Optional"`, or `"No"`
+</ResponseField>
+
+<ResponseField name="warranty" type="string" required>
+  Warranty description (e.g., "3 años compresor, 1 año partes")
+</ResponseField>
+
+<ResponseField name="installation_kit" type="string" required>
+  Installation kit status (e.g., "incluido", "opcional")
+</ResponseField>
+
+<ResponseField name="capacities" type="array" required>
+  Array of available BTU capacities with prices
+  
+  <Expandable title="Capacity Object">
+    <ResponseField name="btu_capacity" type="number" required>
+      BTU rating (e.g., `9000`, `12000`, `18000`)
+    </ResponseField>
+    
+    <ResponseField name="net_price" type="number" required>
+      Price without tax (sin IVA)
+    </ResponseField>
+    
+    <ResponseField name="price_with_tax" type="number" required>
+      Price with tax (con IVA, typically net_price × 1.19)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Import Equipment Data
+
+Upload your equipment catalog to Firebase:
+
+<Steps>
+  <Step title="Prepare JSON File">
+    Create a JSON file with your equipment array:
+    
+    ```json equipment.json
+    [
+      {
+        "marca": "Midea",
+        "brand_model": "Mission Pro Inverter",
+        "type": "Split Muro",
+        "refrigerant": "R32",
+        "wifi": "Optional",
+        "warranty": "1 año compresor y partes",
+        "installation_kit": "incluido",
+        "capacities": [
+          {
+            "btu_capacity": 9000,
+            "net_price": 150000,
+            "price_with_tax": 178500
+          }
+        ]
+      }
+    ]
+    ```
+  </Step>
+
+  <Step title="Import to Firebase">
+    In Firebase Console:
+    
+    1. Go to **Realtime Database → Data**
+    2. Click the **⋮** menu → **Import JSON**
+    3. Select your `equipment.json` file
+    4. Choose import location: `/air_conditioners`
+    5. Click **Import**
+  </Step>
+
+  <Step title="Verify Data">
+    Refresh your CotizaClima application:
+    
+    - Status dot should turn **green**
+    - Equipment count appears in toast notification
+    - All equipment visible in catalog
+  </Step>
+</Steps>
+
+<Tip>
+  **Quick update workflow**: Edit your JSON file locally, then reimport to Firebase. The app automatically reloads data on next page load.
+</Tip>
+
+## Accessories Configuration
+
+Accessories are stored in a separate `accessories` node:
+
+```json accessories structure
+{
+  "accessories": [
+    {
+      "id": "kit_can_9k",
+      "name": "Kit cañerías 9K",
+      "desc": "3m cobre 1/4\" + 3/8\"",
+      "categoria": "cañerias",
+      "price": 25000,
+      "color": "rgba(79,102,132,0.12)"
+    },
+    {
+      "id": "cordon_15",
+      "name": "Cordón eléctrico 15A",
+      "desc": "Cable 3x2.5mm, 3 metros",
+      "categoria": "electrico",
+      "price": 12000,
+      "color": "rgba(255,175,66,0.12)"
+    }
+  ]
+}
+```
+
+### Accessory Icons
+
+Icons are mapped in `app.js` using Font Awesome classes:
+
+```javascript app.js (lines 916-943)
+const ACC_ICON_MAP = {
+  // By ID (takes priority)
+  kit_can_9k:        'fa-ruler-combined',
+  kit_can_12_18k:    'fa-ruler-combined',
+  kit_can_24k:       'fa-ruler-combined',
+  cordon_15:         'fa-bolt',
+  cordon_25:         'fa-bolt',
+  soporte_techo:     'fa-thumbtack',
+  kit_drenaje:       'fa-droplet',
+  breaker_16a:       'fa-plug',
+  mantencion_lavado: 'fa-spray-can-sparkles',
+  gas_r410_12k:      'fa-temperature-low',
+  gas_r410_18_32k:   'fa-temperature-low',
+  gas_r32_12k:       'fa-temperature-low',
+  gas_r32_18_32k:    'fa-temperature-low',
+  
+  // Fallback by category
+  _cat_cañerias:     'fa-ruler-combined',
+  _cat_electrico:    'fa-bolt',
+  _cat_instalacion:  'fa-screwdriver-wrench',
+  _cat_mantencion:   'fa-spray-can-sparkles',
+  _cat_gas:          'fa-temperature-low',
+};
+
+function getAccIcon(acc) {
+  return ACC_ICON_MAP[acc.id]
+    || ACC_ICON_MAP['_cat_' + (acc.categoria || '')]
+    || 'fa-box';  // Default fallback
+}
+```
+
+<Info>
+  Add custom accessories by:
+  1. Adding entries to Firebase `/accessories` node
+  2. (Optional) Adding icon mapping in `ACC_ICON_MAP`
+  3. Category fallback automatically applies if no specific icon defined
+</Info>
+
+## Authentication
+
+Enable Firebase Authentication for quote history and client management.
+
+### Setup Authentication
+
+<Steps>
+  <Step title="Enable Firebase Authentication">
+    In Firebase Console:
+    
+    1. Go to **Authentication → Sign-in method**
+    2. Enable **Email/Password** provider
+    3. (Optional) Enable additional providers (Google, etc.)
+  </Step>
+
+  <Step title="Configure API Key">
+    Edit `firebase-auth.js` with your Firebase Web API Key:
+    
+    ```javascript firebase-auth.js (lines 4-6)
+    const FIREBASE_AUTH_CONFIG = {
+      apiKey: 'AIzaSyAIvIig9S0bQPYDf_eilrPB7lWbiWPy9EU'  // Replace with your key
+    };
+    ```
+    
+    **Find your API key**:
+    - Firebase Console → Project Settings → General
+    - Under "Your apps" → Web app → Config
+    - Copy the `apiKey` value
+  </Step>
+
+  <Step title="Create User Accounts">
+    In Firebase Console:
+    
+    1. Go to **Authentication → Users**
+    2. Click **Add user**
+    3. Enter email and password
+    4. User can now log in to CotizaClima
+  </Step>
+</Steps>
+
+### Authentication Features
+
+Once logged in, users get access to:
+
+<CardGroup cols={2}>
+  <Card title="Quote History" icon="clock-rotate-left">
+    All quotes automatically saved to Firebase with:
+    - Quote number and date
+    - Client information
+    - Equipment and service details
+    - Total price
+  </Card>
+
+  <Card title="Client Database" icon="users">
+    Store and reuse client information:
+    - Auto-complete from previous quotes
+    - Client contact history
+    - Quick quote duplication
+  </Card>
+
+  <Card title="Rankings & Analytics" icon="fire">
+    Track most quoted equipment:
+    - "Más cotizados" sorting
+    - Usage analytics
+    - Popular models identification
+  </Card>
+
+  <Card title="Draft Quotes" icon="floppy-disk">
+    Save incomplete quotes:
+    - Resume later
+    - Share between devices
+    - Cloud sync
+  </Card>
+</CardGroup>
+
+### Session Management
+
+Authentication uses Firebase REST API with automatic token refresh:
+
+```javascript firebase-auth.js (lines 129-149)
+async function getValidIdToken() {
+  const session = readSession();
+  if (!session || !session.idToken) return null;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (session.expiresAt && session.expiresAt > nowSec) {
+    return session.idToken;  // Token still valid
+  }
+
+  if (!session.refreshToken) {
+    clearSession();
+    return null;
+  }
+
+  try {
+    return await refreshIdToken(session.refreshToken);
+  } catch (e) {
+    clearSession();
+    return null;
+  }
+}
+```
+
+- **Session storage**: User session persists until browser tab closes
+- **Token refresh**: Automatic before expiration (every ~55 minutes)
+- **Graceful logout**: Failed refresh clears session
+
+## Brand Logos
+
+Customize brand logos displayed in equipment cards.
+
+### Logo Directory
+
+```javascript app.js (lines 70-80)
+const BRAND_ICON_DIR = 'assets/img';
+const BRAND_ICON_EXTENSIONS = ['svg', 'png', 'webp', 'jpg', 'jpeg'];
+const BRAND_ICON_OVERRIDES = {
+  daitsu: ['daitsu'],
+  ika: ['ika'],
+  kendal: ['kendal'],
+  lg: ['lg'],
+  midea: ['midea'],
+  tcl: ['tcl'],
+  clark: ['clark']
+};
+```
+
+### Add Brand Logo
+
+<Steps>
+  <Step title="Prepare Logo File">
+    - **Format**: SVG (preferred), PNG, WEBP, JPG
+    - **Size**: Square ratio recommended
+    - **Naming**: Lowercase brand name (e.g., `lg.svg`, `midea.png`)
+  </Step>
+
+  <Step title="Upload to Assets">
+    Place logo file in `assets/img/` directory:
+    
+    ```
+    assets/
+    └── img/
+        ├── lg.svg
+        ├── midea.png
+        ├── samsung.svg
+        └── daikin.webp
+    ```
+  </Step>
+
+  <Step title="Auto-Detection">
+    CotizaClima automatically:
+    - Normalizes brand name (removes accents, lowercase)
+    - Tries all supported extensions
+    - Falls back to next extension if file not found
+    - Hides logo if no match found
+    
+    ```javascript Logo Resolution
+    function getBrandIconCandidates(brand) {
+      const normalized = normalizeBrandKey(brand);  // "LG" → "lg"
+      const baseNames = BRAND_ICON_OVERRIDES[normalized] || [normalized];
+      const files = [];
+      
+      baseNames.forEach(base => {
+        BRAND_ICON_EXTENSIONS.forEach(ext => {
+          files.push(`${BRAND_ICON_DIR}/${base}.${ext}`);
+        });
+      });
+      
+      return [...new Set(files)];
+      // Returns: ["assets/img/lg.svg", "assets/img/lg.png", ...]
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  For brands with special characters or multiple names, add an override in `BRAND_ICON_OVERRIDES`.
+</Tip>
+
+## Deployment
+
+### Static Hosting
+
+CotizaClima is a single-page app that works on any static host:
+
+<CodeGroup>
+```bash Firebase Hosting
+# Install Firebase CLI
+npm install -g firebase-tools
+
+# Login to Firebase
+firebase login
+
+# Initialize hosting
+firebase init hosting
+
+# Deploy
+firebase deploy --only hosting
+```
+
+```bash Netlify
+# Install Netlify CLI
+npm install -g netlify-cli
+
+# Login and deploy
+netlify deploy --prod --dir=.
+```
+
+```bash Vercel
+# Install Vercel CLI
+npm install -g vercel
+
+# Deploy
+vercel --prod
+```
+
+```bash GitHub Pages
+# Push to GitHub repo
+git add .
+git commit -m "Deploy CotizaClima"
+git push origin main
+
+# Enable GitHub Pages in repo settings
+# Settings → Pages → Source: main branch
+```
+</CodeGroup>
+
+### HTTPS Requirement
+
+<Warning>
+  The GPS feature (`fillAddressFromGPS`) requires **HTTPS** in production. Browsers block Geolocation API on insecure origins.
+</Warning>
+
+All recommended hosting providers automatically provide HTTPS certificates.
+
+### Environment Checklist
+
+<Steps>
+  <Step title="Firebase Configuration">
+    ✓ Update `FIREBASE_CONNECTION.databaseURL` in `app.js`
+    
+    ✓ Update `FIREBASE_AUTH_CONFIG.apiKey` in `firebase-auth.js`
+    
+    ✓ Set appropriate database security rules
+  </Step>
+
+  <Step title="Equipment Catalog">
+    ✓ Import equipment data to Firebase `/air_conditioners`
+    
+    ✓ Import accessories to Firebase `/accessories`
+    
+    ✓ Add brand logos to `assets/img/`
+  </Step>
+
+  <Step title="Authentication">
+    ✓ Enable Email/Password authentication in Firebase
+    
+    ✓ Create user accounts for your team
+    
+    ✓ Test login flow
+  </Step>
+
+  <Step title="Testing">
+    ✓ Verify equipment loads from Firebase (green status dot)
+    
+    ✓ Test quote creation end-to-end
+    
+    ✓ Generate and download PDF
+    
+    ✓ Test on mobile devices
+  </Step>
+</Steps>
+
+## Demo Mode Features
+
+When Firebase is not configured, CotizaClima runs with:
+
+<Accordion title="Demo Equipment Catalog">
+  Built-in sample equipment including:
+  - Midea Mission Pro Inverter (9K-24K BTU)
+  - LG Dual Inverter (12K-36K BTU)
+  - Samsung WindFree (9K-18K BTU)
+  - TCL Elite Series (12K-24K BTU)
+  - Daitsu ASD series (9K-18K BTU)
+
+  All with realistic pricing and specifications for Chile market.
+</Accordion>
+
+<Accordion title="Demo Accessories">
+  Standard accessories:
+  - Pipe kits (various sizes)
+  - Power cords
+  - Brackets and supports
+  - Drainage kits
+  - Circuit breakers
+  - Refrigerant gas refills
+</Accordion>
+
+<Accordion title="Local Storage Only">
+  Quotes saved to browser localStorage:
+  - Quote number counter persists
+  - Draft quotes available
+  - No cloud sync
+  - Data lost if browser cache cleared
+</Accordion>
+
+<Accordion title="No Authentication">
+  All features work without login:
+  - Cannot access quote history
+  - Cannot sync between devices
+  - No client database
+  - No usage analytics
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Red status dot - Firebase not connecting">
+    **Possible causes:**
+    - Incorrect `databaseURL` in `FIREBASE_CONNECTION`
+    - Database rules deny read access
+    - Network connectivity issue
+    - Firebase project deleted/disabled
+
+    **Solution:**
+    1. Check console for error messages
+    2. Verify database URL format (must end with `/`)
+    3. Test database URL in browser (should return JSON)
+    4. Review Firebase database rules
+  </Accordion>
+
+  <Accordion title="Equipment not loading">
+    **Check:**
+    - Data exists at `/air_conditioners` node in Firebase
+    - Data is an array (or object with numeric keys)
+    - Each equipment has required fields (marca, brand_model, capacities)
+    - Database rules allow read access
+
+    **Solution:**
+    ```javascript
+    // Test endpoint directly:
+    fetch('https://YOUR-PROJECT.firebaseio.com/air_conditioners.json')
+      .then(r => r.json())
+      .then(data => console.log(data));
+    ```
+  </Accordion>
+
+  <Accordion title="Login fails">
+    **Check:**
+    - `FIREBASE_AUTH_CONFIG.apiKey` is correct
+    - Email/Password authentication enabled in Firebase
+    - User account exists in Firebase Authentication
+    - Credentials are correct
+
+    **Error messages:**
+    - `EMAIL_NOT_FOUND`: User doesn't exist
+    - `INVALID_PASSWORD`: Wrong password
+    - `USER_DISABLED`: Account disabled
+    - `TOO_MANY_ATTEMPTS`: Too many failed logins, wait 1 hour
+  </Accordion>
+
+  <Accordion title="PDF generation fails">
+    **Causes:**
+    - jsPDF library not loaded
+    - Browser blocked popup/download
+    - Client data incomplete (missing required fields)
+
+    **Solution:**
+    - Check browser console for errors
+    - Ensure name and address are filled
+    - Try different browser
+    - Check that jsPDF CDN is accessible
+  </Accordion>
+
+  <Accordion title="GPS button not working">
+    **Requirements:**
+    - HTTPS connection (not HTTP)
+    - User grants location permission
+    - Device has GPS/location services enabled
+
+    **Solution:**
+    - Use HTTPS in production (HTTP blocks geolocation)
+    - Check browser permission settings
+    - Test on device with location services on
+  </Accordion>
+</AccordionGroup>
+
+## Support & Customization
+
+CotizaClima is fully customizable:
+
+<CardGroup cols={2}>
+  <Card title="Styling" icon="palette">
+    Edit `styles.css` to match your brand:
+    - Colors and fonts
+    - Logo and header
+    - Card layouts
+    - Button styles
+  </Card>
+
+  <Card title="Service Types" icon="list">
+    Modify `SERVICES` array in `app.js`:
+    - Add/remove service types
+    - Change default prices
+    - Update descriptions
+  </Card>
+
+  <Card title="PDF Template" icon="file-pdf">
+    Customize PDF output in `app.js`:
+    - Company information
+    - Header/footer
+    - Terms and conditions
+    - Logo and branding
+  </Card>
+
+  <Card title="Localization" icon="language">
+    All text strings in source:
+    - Spanish by default
+    - Easy to translate
+    - Region-specific terminology
+  </Card>
+</CardGroup>
+
+<Note>
+  Need help with custom features? The codebase is well-structured and commented in Spanish for easy modification.
+</Note>

@@ -1,80 +1,213 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get started with CotizaClima and create your first air conditioning quote in minutes"
 ---
 
-## Get started in three steps
+## Getting Started
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+CotizaClima runs directly in your browser and can work in demo mode without any configuration. This quickstart will guide you through creating your first professional air conditioning quote.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+CotizaClima works in **demo mode** by default, allowing you to explore all features without Firebase setup. For production use with data persistence, see the [Setup Guide](/setup).
 </Note>
+
+## Create Your First Quote
+
+Follow these steps to create a complete air conditioning quote:
+
+<Steps>
+  <Step title="Open CotizaClima">
+    Open `index.html` in your web browser. You'll see the quotation wizard with 5 steps displayed in the progress bar at the top:
+    
+    1. **Equipo** (Equipment)
+    2. **Servicio** (Service)
+    3. **Extras** (Accessories)
+    4. **Cliente** (Client)
+    5. **Resumen** (Summary/PDF)
+  </Step>
+
+  <Step title="Select Equipment">
+    On the first page, you'll see the equipment catalog with filtering options:
+    
+    - **Search bar**: Search by brand or model name
+    - **Brand filter**: Filter by manufacturer (LG, Midea, TCL, etc.)
+    - **BTU filter**: Filter by cooling capacity (9,000 to 36,000 BTU)
+    - **Refrigerant filter**: Filter by refrigerant type (R32 or R410)
+    - **Popular button**: Sort by most quoted equipment
+    
+    Each equipment card shows:
+    - Brand logo and model name
+    - Available capacities (BTU options)
+    - Refrigerant type
+    - Price with tax
+    - Energy efficiency rating
+    
+    Click on a BTU capacity to select it. Use the **+** and **-** buttons to adjust quantity. You can select multiple equipment with different capacities.
+    
+    <Tip>
+    Click the **Más cotizados** (Most Quoted) button to see popular equipment first, based on historical quote data.
+    </Tip>
+  </Step>
+
+  <Step title="Choose Service Type">
+    Select the type of service you're quoting. CotizaClima supports 6 service types:
+    
+    <CardGroup cols={2}>
+      <Card title="Instalación nueva" icon="hammer">
+        New installation of air conditioning equipment
+      </Card>
+      <Card title="Mantención" icon="screwdriver-wrench">
+        Preventive maintenance and cleaning service
+      </Card>
+      <Card title="Cambio + instalación" icon="arrow-right-arrow-left">
+        Remove old equipment and install new unit
+      </Card>
+      <Card title="Reparación" icon="gear">
+        Diagnosis and repair service
+      </Card>
+      <Card title="Visita garantía" icon="shield">
+        Warranty visit (no charge)
+      </Card>
+      <Card title="Solo presupuesto" icon="clipboard-list">
+        Equipment quote only, no installation
+      </Card>
+    </CardGroup>
+    
+    **Multi-service selection**: For installation and maintenance, you can adjust quantities:
+    - Installation quantities are pre-filled based on equipment count
+    - Click **+** or **-** to adjust service quantities
+    - The price updates automatically
+    
+    Add service notes in the text area to describe special conditions, cable runs, access details, etc.
+  </Step>
+
+  <Step title="Add Accessories (Optional)">
+    Select any additional accessories or extras:
+    - Extended warranty
+    - Installation materials
+    - Cable channels
+    - Remote controls
+    - Mounting brackets
+    
+    Use the **+** and **-** buttons to adjust quantities. The summary chip at the bottom shows your total accessories cost.
+    
+    <Info>
+    You can skip this step if no accessories are needed.
+    </Info>
+  </Step>
+
+  <Step title="Enter Client Details">
+    Fill in the client information form:
+    
+    **Required fields**:
+    - Client name
+    - Installation address
+    
+    **Optional fields**:
+    - RUT (Chilean tax ID)
+    - Phone number
+    - Email address
+    - City
+    - Region (pre-filled with "Maule")
+    - Property type (House, Apartment, Office, etc.)
+    - Additional notes
+    
+    **GPS Location**: Click the **Usar GPS** button to automatically fill the address and city based on your current location using the browser's geolocation API.
+    
+    <Warning>
+    The GPS feature requires browser location permissions and works best on mobile devices.
+    </Warning>
+  </Step>
+
+  <Step title="Review and Generate PDF">
+    The summary page displays:
+    
+    - **Quote information**: Quote number, date, validity period (15 days)
+    - **Client details**: All information entered in step 4
+    - **Equipment**: Model, capacity, refrigerant, price
+    - **Service**: Type and price with editable pricing fields
+    - **Accessories**: List of extras with individual prices
+    - **Discount**: Optional percentage discount
+    - **Total**: Final quote amount
+    
+    You can **edit prices** by clicking on the price fields. The total updates automatically.
+    
+    Click **Generar PDF · Descargar** to create and download a professional PDF quote.
+    
+    <CardGroup cols={2}>
+      <Card title="Guardar borrador" icon="floppy-disk">
+        Save as draft to edit later (requires authentication)
+      </Card>
+      <Card title="Nueva cotización" icon="rotate-right">
+        Start a new quote from scratch
+      </Card>
+    </CardGroup>
+  </Step>
+</Steps>
+
+## Navigation Methods
+
+CotizaClima provides three ways to navigate between steps:
+
+### 1. Bottom Navigation Bar
+The bottom bar shows all 5 steps with icons. Click any step to jump directly to it.
+
+### 2. Floating Action Buttons
+Two circular buttons appear on the sides:
+- **Left arrow** (←): Go to previous step
+- **Right arrow** (→): Go to next step (disabled until current step is valid)
+
+### 3. Step Progress Bar
+The top bar shows your current position. Steps are highlighted as you complete them.
+
+## Quote Numbers
+
+Each quote automatically receives a unique number in the format:
+
+```text
+20260313-0001
+```
+
+Format: `YYYYMMDD-NNNN` where:
+- `YYYYMMDD`: Current date
+- `NNNN`: Sequential number for the day (0001, 0002, etc.)
+
+<Info>
+Quote numbers persist in browser local storage. The counter resets daily.
+</Info>
+
+## Demo Mode vs. Authenticated Mode
+
+### Demo Mode (Default)
+- Works immediately without configuration
+- Uses built-in demo equipment catalog
+- Quote numbers stored in browser only
+- No quote history or client directory
+- Perfect for testing and evaluation
+
+### Authenticated Mode
+Requires Firebase setup and user login:
+- Equipment catalog from Firebase Realtime Database
+- Save quotes and drafts to cloud
+- Access quote history
+- Client directory with search
+- Equipment popularity tracking
+
+See the [Setup Guide](/setup) to configure Firebase and enable authentication.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Complete Setup" icon="gear" href="/setup">
+    Configure Firebase for production use
+  </Card>
+  <Card title="Learn Features" icon="sparkles" href="/features/quotation-wizard">
+    Explore all CotizaClima features
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/firebase-setup">
+    Customize pricing and equipment
+  </Card>
+  <Card title="User Guide" icon="book-open" href="/guides/creating-quotes">
+    Detailed guide for creating quotes
+  </Card>
+</CardGroup>

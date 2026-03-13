@@ -1,0 +1,321 @@
+---
+title: 'Firebase Setup'
+description: 'Configure Firebase Realtime Database and Authentication for CotizaClima'
+---
+
+## Overview
+
+CotizaClima uses Firebase for two core features:
+- **Firebase Realtime Database** - Store equipment data and quotations
+- **Firebase Authentication** - User authentication for quote history
+
+The app works offline with demo data if Firebase is not configured.
+
+---
+
+## Creating a Firebase Project
+
+<Steps>
+  <Step title="Create Firebase Project">
+    1. Go to [Firebase Console](https://console.firebase.google.com/)
+    2. Click **Add Project**
+    3. Enter your project name (e.g., "cotizaclima-prod")
+    4. Follow the setup wizard
+  </Step>
+
+  <Step title="Enable Realtime Database">
+    1. In your Firebase project, navigate to **Build** → **Realtime Database**
+    2. Click **Create Database**
+    3. Choose a location (preferably closest to your users)
+    4. Start in **test mode** for now (we'll configure security rules later)
+  </Step>
+
+  <Step title="Enable Authentication">
+    1. Navigate to **Build** → **Authentication**
+    2. Click **Get Started**
+    3. Enable **Email/Password** sign-in method
+    4. Create your first user account from the **Users** tab
+  </Step>
+
+  <Step title="Get Your Configuration">
+    Copy your database URL from the Realtime Database section. It looks like:
+    ```
+    https://your-project-default-rtdb.firebaseio.com/
+    ```
+    
+    For Authentication, go to **Project Settings** → **General** and copy your **Web API Key**.
+  </Step>
+</Steps>
+
+---
+
+## Configuring Firebase Connection
+
+### Database Configuration
+
+Edit `app.js` and update the `FIREBASE_CONNECTION` object:
+
+```javascript app.js
+const FIREBASE_CONNECTION = {
+  // Your Firebase Realtime Database URL
+  databaseURL: 'https://cotizaciones-app-ece65-default-rtdb.firebaseio.com/',
+  
+  // Node name where equipment data is stored
+  node: 'air_conditioners',
+  
+  // Optional: auth token if your rules require authentication for reads
+  authToken: ''
+};
+```
+
+<Note>
+  **Testing Tip:** Leave `databaseURL` empty (`''`) during development to use demo data without Firebase.
+</Note>
+
+### Authentication Configuration
+
+Edit `firebase-auth.js` and update the `FIREBASE_AUTH_CONFIG` object:
+
+```javascript firebase-auth.js
+const FIREBASE_AUTH_CONFIG = {
+  apiKey: 'AIzaSyAIvIig9S0bQPYDf_eilrPB7lWbiWPy9EU'
+};
+```
+
+Replace the `apiKey` value with your Firebase project's Web API Key.
+
+<Warning>
+  Keep your API key secure. For production deployments, consider using environment variables or a build-time configuration.
+</Warning>
+
+---
+
+## Database Structure
+
+### Setting Up the Equipment Node
+
+Your Firebase Realtime Database should have the following structure:
+
+```json
+{
+  "air_conditioners": [
+    {
+      "marca": "LG",
+      "brand_model": "Dual Inverter V Plus",
+      "type": "Split",
+      "refrigerant": "R32",
+      "wifi": "Yes",
+      "warranty": "3 years",
+      "installation_kit": "Standard",
+      "capacities": [
+        {
+          "btu_capacity": 9000,
+          "net_price": 289900,
+          "price_with_tax": 345000
+        },
+        {
+          "btu_capacity": 12000,
+          "net_price": 336134,
+          "price_with_tax": 400000
+        }
+      ]
+    }
+  ],
+  "accessories": [
+    {
+      "id": "kit_can_9k",
+      "name": "Kit cañería 9K",
+      "desc": "3 metros, incluye aislación",
+      "price": 25000,
+      "categoria": "cañerias",
+      "color": "rgba(26,58,92,0.08)"
+    }
+  ]
+}
+```
+
+<Info>
+  Firebase converts arrays to objects with numeric keys when importing JSON. CotizaClima automatically normalizes this format.
+</Info>
+
+### Importing Data to Firebase
+
+<Steps>
+  <Step title="Prepare Your Data">
+    Create a JSON file with your equipment data following the structure above.
+  </Step>
+
+  <Step title="Import via Firebase Console">
+    1. Go to **Realtime Database** in Firebase Console
+    2. Click the **⋮** menu → **Import JSON**
+    3. Select your JSON file
+    4. Choose to import at the root level or specific node
+  </Step>
+
+  <Step title="Verify Import">
+    Check that the `air_conditioners` node exists and contains your equipment array.
+  </Step>
+</Steps>
+
+---
+
+## Security Rules
+
+### Recommended Rules for Production
+
+In the Firebase Console, go to **Realtime Database** → **Rules** and configure:
+
+```json
+{
+  "rules": {
+    // Equipment data: public read, authenticated write
+    "air_conditioners": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    
+    // Accessories: public read, authenticated write
+    "accessories": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    
+    // User quotes: private per user
+    "quotes": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    
+    // Client data: private per user
+    "clients": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    
+    // Rankings: private per user
+    "rankings": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    }
+  }
+}
+```
+
+<Warning>
+  **Never use test mode in production!** Test mode allows anyone to read and write your database.
+</Warning>
+
+### Rules Explanation
+
+<CardGroup cols={2}>
+  <Card title="Public Equipment Data" icon="database">
+    Equipment and accessories are **publicly readable** so the app works without authentication. Only authenticated users can modify them.
+  </Card>
+  
+  <Card title="Private User Data" icon="lock">
+    Quotes, clients, and rankings are **private per user**. Each user can only access their own data using their Firebase UID.
+  </Card>
+</CardGroup>
+
+---
+
+## Testing Your Configuration
+
+<Steps>
+  <Step title="Check Firebase Status">
+    Open your app and look for the **status dot** in the header:
+    - 🟢 Green = Connected to Firebase
+    - 🟠 Orange = Connecting
+    - 🔴 Red = Using demo data (Firebase not configured or failed)
+  </Step>
+
+  <Step title="Verify Equipment Loading">
+    1. Go to the Equipment selection page
+    2. Check that your equipment from Firebase is displayed
+    3. The count should match your database entries
+  </Step>
+
+  <Step title="Test Authentication">
+    1. Click the hamburger menu (☰) in the header
+    2. Select **Iniciar sesión**
+    3. Log in with your Firebase user credentials
+    4. Verify that **Ver historial** becomes enabled
+  </Step>
+</Steps>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Red status dot - Using demo data">
+    **Possible causes:**
+    - `databaseURL` is empty or invalid
+    - Firebase project doesn't exist
+    - Database rules block read access
+    - Network connectivity issues
+    
+    **Solution:**
+    1. Verify your `databaseURL` in `app.js`
+    2. Check Firebase Console that database exists
+    3. Ensure security rules allow public reads for `air_conditioners`
+    4. Open browser DevTools → Network tab to see the actual error
+  </Accordion>
+
+  <Accordion title="Authentication fails">
+    **Possible causes:**
+    - Invalid `apiKey` in `firebase-auth.js`
+    - Email/Password sign-in method not enabled
+    - User doesn't exist in Firebase
+    
+    **Solution:**
+    1. Verify `apiKey` matches your Firebase project
+    2. Enable Email/Password in Firebase Console → Authentication → Sign-in method
+    3. Create a test user in Authentication → Users tab
+  </Accordion>
+
+  <Accordion title="Equipment not loading from Firebase">
+    **Possible causes:**
+    - Node name mismatch (default is `air_conditioners`)
+    - Data structure doesn't match expected format
+    - Empty node in database
+    
+    **Solution:**
+    1. Check that `node` in `FIREBASE_CONNECTION` matches your database node name
+    2. Verify data structure matches the example above
+    3. Ensure at least one equipment entry exists
+  </Accordion>
+
+  <Accordion title="CORS errors">
+    Firebase Realtime Database should not have CORS issues when accessed from web browsers.
+    
+    If you see CORS errors:
+    1. Verify the `databaseURL` includes `https://` protocol
+    2. Check that the URL ends with `.firebaseio.com`
+    3. Make sure you're not using a proxy that blocks requests
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Equipment Data" icon="snowflake" href="./equipment-data">
+    Learn how to structure and manage your equipment catalog
+  </Card>
+  
+  <Card title="Service Pricing" icon="tag" href="./service-pricing">
+    Configure installation and maintenance service prices
+  </Card>
+  
+  <Card title="Customization" icon="palette" href="./customization">
+    Customize branding, colors, and company information
+  </Card>
+</CardGroup>
