@@ -1,0 +1,85 @@
+{
+  "projectType": "saas",
+  "projectName": "CotizaClima",
+  "projectDescription": "Professional air conditioning quotation system for HVAC businesses to create, manage, and track service quotes.",
+  "theme": "palm",
+  "primaryColor": "#0EA5E9",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "setup"]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/quotation-wizard",
+              "features/equipment-catalog",
+              "features/service-types",
+              "features/client-management",
+              "features/pdf-generation"
+            ]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "guides/creating-quotes",
+              "guides/managing-clients",
+              "guides/quote-history",
+              "guides/authentication"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/firebase-setup",
+              "configuration/equipment-data",
+              "configuration/service-pricing",
+              "configuration/customization"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Technical Reference",
+            "pages": [
+              "reference/architecture",
+              "reference/data-models",
+              "reference/firebase-integration",
+              "reference/modules"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Step-by-step quotation wizard with 5-step workflow",
+    "Equipment catalog with filtering by brand, BTU capacity, and refrigerant type",
+    "Multiple service types: installation, maintenance, repair, warranty",
+    "Client directory with GPS location support",
+    "Professional PDF quote generation with customizable pricing",
+    "Firebase authentication and real-time data persistence",
+    "Quote history and draft management",
+    "Popularity ranking system for equipment"
+  ],
+  "publicApiSurface": [
+    "Equipment selection and filtering interface",
+    "Service configuration (instalacion, mantencion, reparacion, garantia, cambio, presupuesto)",
+    "Client data collection (name, RUT, phone, email, address, property type)",
+    "Quote persistence API (saveQuote, loadQuote, deleteDraft)",
+    "PDF generation with jsPDF",
+    "Firebase Authentication integration",
+    "Firebase Realtime Database for equipment catalog",
+    "Client repository management",
+    "Ranking system for popular equipment"
+  ]
+}
